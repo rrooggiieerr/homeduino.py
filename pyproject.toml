@@ -19,7 +19,8 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "pyserial>=3.4"
+    "pyserial>=3.4",
+    "rfcontrolpy>=0.0.1"
 ]
 
 [project.urls]
