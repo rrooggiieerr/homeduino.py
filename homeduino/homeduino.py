@@ -155,7 +155,7 @@ class HomeduinoProtocol(asyncio.Protocol):
     def ping(self):
         self.send_raw_packet("PING message")
 
-    def rf_send(self, protocol, values) -> bool:
+    def rf_send(self, protocol: str, values) -> bool:
         if self.send_pin == None:
             return False
 
@@ -173,7 +173,7 @@ class HomeduinoProtocol(asyncio.Protocol):
             packet += "0 "
             i += 1
 
-        packet += protocol.encode(values)
+        packet += protocol.encode(**values)
 
         return self.send_raw_packet(packet)
 
@@ -275,7 +275,7 @@ class Homeduino:
         else:
             self.rf_receive_callbacks.append(rf_receive_callback)
 
-    def rf_send(self, protocol, values):
+    def rf_send(self, protocol: str, values):
         if self.protocol is not None:
             return self.protocol.rf_send(protocol, values)
         return False
