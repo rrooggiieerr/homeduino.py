@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "homeduino"
-version = "0.0.1"
+version = "0.0.2"
 license = {text = "Apache-2.0"}
 authors = [
     { name="Rogier van Staveren" }
@@ -19,7 +19,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "pyserial>=3.4",
+    "pyserial-asyncio==0.6",
     "rfcontrolpy>=0.0.1"
 ]
 
