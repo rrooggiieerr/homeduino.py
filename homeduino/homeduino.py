@@ -85,30 +85,9 @@ class HomeduinoProtocol(asyncio.Protocol):
         # The first 8 numbers are the pulse lengths and the last string of numbers is the pulse sequence
         parts = line.split(" ")
 
-        pulse_lengths = parts[2:9]
-        pulse_lengths = [int(i) for i in pulse_lengths]
+        pulse_lengths = [int(i) for i in parts[2:9]]
         # logger.debug("pulse lengths: %s", pulse_lengths)
         pulse_sequence = parts[10]
-
-        # Filter out 0 length pulses
-        pulse_lengths = [i for i in pulse_lengths if i > 0]
-        # logger.debug("pulse lengths: %s", pulse_lengths)
-
-        # Sort the pulses from short to long and update indices in pulse sequence
-        sorted_indices = [
-            i for i, _ in sorted(enumerate(pulse_lengths), key=lambda x: x[1])
-        ]
-        # logger.debug("sorted indices: %s", sorted_indices)
-        reindexed_pulse_sequence = ""
-        for i, c in enumerate(pulse_sequence):
-            reindexed_pulse_sequence += str(sorted_indices.index(int(c)))
-        # logger.debug("reindexed pulse sequence: %s", reindexed_pulse_sequence)
-
-        pulse_lengths.sort()
-        pulse_sequence = reindexed_pulse_sequence
-
-        # pulse_count = len(pulse_sequence)
-        # logger.debug("pulse count: %s", pulse_count)
 
         # Match pulse sequence to a protocol
         decoded = controller.decode_pulses(pulse_lengths, pulse_sequence)
