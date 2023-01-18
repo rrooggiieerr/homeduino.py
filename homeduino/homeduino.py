@@ -1,8 +1,11 @@
 import asyncio
+import io
 import logging
 import os
 import sys
+import time
 from asyncio.transports import BaseTransport
+from collections import deque
 from functools import partial
 from typing import Any, Optional
 
@@ -22,23 +25,25 @@ class HomeduinoProtocol(asyncio.Protocol):
     _tx_busy = False
     _ack = None
 
+    _str_buffer = ""
+    str_buffer = deque()
+
     def __init__(
         self,
-        receive_interrupt: int,
-        send_pin: int,
         loop: Optional[asyncio.AbstractEventLoop] = None,
         **_kwargs: Any,
     ):
         """Initialize class."""
-        self.buffer = ""
-
-        self.receive_interrupt = receive_interrupt
-        self.send_pin = send_pin
-
         if loop:
             self.loop = loop
         else:
             self.loop = asyncio.get_event_loop()
+
+    async def set_receive_interrupt(self, receive_interrupt: int) -> bool:
+        if receive_interrupt is not None:
+            response = await self.send(f"RF receive {receive_interrupt}")
+            return response == "ACK"
+        return False
 
     def add_rf_receive_callback(self, rf_receive_callback) -> None:
         if rf_receive_callback is not None:
@@ -56,53 +61,23 @@ class HomeduinoProtocol(asyncio.Protocol):
                 "Error during decode of data, invalid data: %s", invalid_data
             )
         else:
-            # logger.debug("received data: %s", decoded_data.strip())
-            self.buffer += decoded_data
-            while "\r\n" in self.buffer:
-                line, self.buffer = self.buffer.split("\r\n", 1)
+            logger.debug("received data: %s", decoded_data.strip())
+            self._str_buffer += decoded_data
+            while "\r\n" in self._str_buffer:
+                line, self._str_buffer = self._str_buffer.split("\r\n", 1)
                 line = line.strip()
-                # logger.debug("received data: %s", line)
-                self.handle_line(line)
-
-    def handle_line(self, line: str):
-        if line == "ready":
-            self.handle_ready()
-        elif line == "ACK":
-            self.handle_ack(line)
-            self._ack = line
-        elif line.startswith("ACK "):
-            self.handle_ack(line)
-            self._ack = line
-        elif line.startswith("ERR "):
-            self.handle_error(line)
-            self._ack = line
-        elif line.startswith("PING "):
-            self.handle_ping(line)
-            self._ack = line
-        elif line.startswith("RF receive "):
-            self.handle_rf_receive(line)
-        elif line.startswith("KP "):
-            self.handle_key_press(line)
-        else:
-            logger.error("Unsupported command '%s'", line)
+                if line == "ready":
+                    self.handle_ready()
+                elif line.startswith("RF receive "):
+                    self.handle_rf_receive(line)
+                elif line.startswith("KP "):
+                    self.handle_key_press(line)
+                elif line != "":
+                    self.str_buffer.append(line)
 
     def handle_ready(self):
         self.ready = True
         logger.info("Homeduino is connected")
-        if self.receive_interrupt is not None:
-            self.send_raw_packet(f"RF receive {self.receive_interrupt}")
-
-    def handle_ack(self, line: str):
-        logger.debug(line)
-        # Ignoring the acknowledge response for now
-
-    def handle_error(self, line: str):
-        _, error = line.split(" ", 1)
-        logger.error(error)
-
-    def handle_ping(self, line: str):
-        logger.debug(line)
-        # Ignoring the ping response for now
 
     def handle_rf_receive(self, line: str):
         logger.debug(line)
@@ -135,7 +110,7 @@ class HomeduinoProtocol(asyncio.Protocol):
         # pulse_count = len(pulse_sequence)
         # logger.debug("pulse count: %s", pulse_count)
 
-        # Match puls sequence to a protocol
+        # Match pulse sequence to a protocol
         decoded = controller.decode_pulses(pulse_lengths, pulse_sequence)
 
         if len(decoded) == 0:
@@ -152,37 +127,12 @@ class HomeduinoProtocol(asyncio.Protocol):
         logger.debug(line)
         # Ignoring key presses for now
 
-    def ping(self):
-        self.send_raw_packet("PING message")
-
-    def rf_send(self, protocol: str, values) -> bool:
-        if self.send_pin == None:
-            return False
-
-        # protocol = controller.get_protocol(protocol)
-        protocol = getattr(sys.modules[controller.__name__], protocol)
-        logger.debug(protocol)
-
-        packet = f"RF send {self.send_pin} 3 "
-
-        for pulse_length in protocol.pulse_lengths:
-            packet += f"{pulse_length} "
-
-        i = len(protocol.pulse_lengths)
-        while i < 8:
-            packet += "0 "
-            i += 1
-
-        packet += protocol.encode(**values)
-
-        return self.send_raw_packet(packet)
-
-    def send_raw_packet(self, packet: str) -> None:
+    async def send(self, packet: str) -> str:
         """Encode and put packet string onto write buffer."""
 
         while self._tx_busy is True:
             logger.info("Too busy to transmit %s", packet)
-            self._sleep(0.1)
+            await asyncio.sleep(0.1)
         self._tx_busy = True
 
         try:
@@ -193,17 +143,17 @@ class HomeduinoProtocol(asyncio.Protocol):
             # BaseTransport
             self.transport.write(data.encode())  # type: ignore
 
-            self._ack = None
-            # while not self._ack:
-            #     pass
-            #     # asyncio.run(asyncio.sleep(0.01))
-            #     # self.loop.run_until_complete()
-            # return self._ack
-            return True
+            while len(self.str_buffer) == 0:
+                await asyncio.sleep(0.1)
+
+            if len(self.str_buffer) > 0:
+                response = self.str_buffer.pop()
+                logger.debug(response)
+                return response.strip()
         finally:
             self._tx_busy = False
 
-        return False
+        return None
 
     def connection_lost(self, exc: Optional[Exception]) -> None:
         logger.info("port closed")
@@ -240,11 +190,9 @@ class Homeduino:
             loop = asyncio.get_event_loop()
         self.loop = loop
 
-    async def connect(self):
+    async def connect(self) -> bool:
         if self.transport is None:
-            protocol_factory = partial(
-                HomeduinoProtocol, self.receive_interrupt, self.send_pin, loop=self.loop
-            )
+            protocol_factory = partial(HomeduinoProtocol, loop=self.loop)
 
             (
                 self.transport,
@@ -259,15 +207,31 @@ class Homeduino:
                 stopbits=serial_asyncio.serial.STOPBITS_ONE,
             )
 
+            while not self.protocol.ready:
+                await asyncio.sleep(0.1)
+
+            await self.protocol.set_receive_interrupt(self.receive_interrupt)
+
             for rf_receive_callback in self.rf_receive_callbacks:
                 self.protocol.add_rf_receive_callback(rf_receive_callback)
 
-        return True
+            return True
+
+        return False
 
     def disconnect(self):
         if self.transport is not None:
             logger.debug("Disconnecting Homeduino")
             self.transport.close()
+
+    async def ping(self) -> bool:
+        if self.protocol is not None:
+            logger.debug("Pinging Homeduino")
+            message = f"PING {time.time()}"
+            response = await self.protocol.send(message)
+            return response == message
+
+        return False
 
     def add_rf_receive_callback(self, rf_receive_callback):
         if self.protocol is not None:
@@ -275,12 +239,28 @@ class Homeduino:
         else:
             self.rf_receive_callbacks.append(rf_receive_callback)
 
-    def rf_send(self, protocol: str, values):
-        if self.protocol is not None:
-            return self.protocol.rf_send(protocol, values)
+    async def rf_send(self, rf_protocol: str, values) -> bool:
+        if self.protocol is not None and self.send_pin is not None:
+            rf_protocol = getattr(sys.modules[controller.__name__], rf_protocol)
+            logger.debug(rf_protocol)
+
+            packet = f"RF send {self.send_pin} 3 "
+
+            for pulse_length in rf_protocol.pulse_lengths:
+                packet += f"{pulse_length} "
+
+            i = len(rf_protocol.pulse_lengths)
+            while i < 8:
+                packet += "0 "
+                i += 1
+
+            packet += rf_protocol.encode(**values)
+
+            response = await self.protocol.send(packet)
+            return response == "ACK"
         return False
 
-    def send_command(self, command):
+    async def send(self, command) -> str:
         if self.protocol is not None:
-            return self.protocol.send_raw_packet(command)
-        return False
+            return await self.protocol.send(command)
+        return None
