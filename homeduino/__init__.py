@@ -1,3 +1,3 @@
-__version__ = "0.0.5.1"
+__version__ = "0.0.5.2"
 
 from homeduino.homeduino import Homeduino
