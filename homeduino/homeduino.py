@@ -140,8 +140,8 @@ class HomeduinoProtocol(asyncio.Protocol):
                     response = self.str_buffer.pop()
                     logger.debug(response)
                     return response.strip()
-            else:
-                raise TimeoutError("Timeout while waiting for command response")
+            # else:
+            #     raise TimeoutError("Timeout while waiting for command response")
         finally:
             self._tx_busy = False
 
