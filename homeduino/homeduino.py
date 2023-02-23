@@ -12,6 +12,7 @@ from typing import Any, Optional
 import serial_asyncio
 from rfcontrol import controller
 from serial_asyncio import SerialTransport
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,14 @@ class HomeduinoProtocol(asyncio.Protocol):
     async def send(self, packet: str) -> str:
         """Encode and put packet string onto write buffer."""
 
+        if not self.transport:
+            logger.error("Not connected")
+            return None
+
+        if not self.ready:
+            logger.error("Not ready")
+            return None
+
         while self._tx_busy is True:
             logger.info("Too busy to transmit %s", packet)
             await asyncio.sleep(0.1)
@@ -122,13 +131,15 @@ class HomeduinoProtocol(asyncio.Protocol):
             # BaseTransport
             self.transport.write(data.encode())  # type: ignore
 
-            while len(self.str_buffer) == 0:
-                await asyncio.sleep(0.1)
+            # Wait for response
+            start_time = datetime.now()
+            while (datetime.now() - start_time).total_seconds() < 1:
+                if len(self.str_buffer) > 0:
+                    response = self.str_buffer.pop()
+                    logger.debug(response)
+                    return response.strip()
 
-            if len(self.str_buffer) > 0:
-                response = self.str_buffer.pop()
-                logger.debug(response)
-                return response.strip()
+            raise TimeoutError("Timeout while waiting for command response")
         finally:
             self._tx_busy = False
 
@@ -140,6 +151,9 @@ class HomeduinoProtocol(asyncio.Protocol):
             logger.exception("disconnected due to exception")
         else:
             logger.info("disconnected because of close/abort.")
+
+        self.transport = None
+        self.ready = False
 
 
 class Homeduino:
