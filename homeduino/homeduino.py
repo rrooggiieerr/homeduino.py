@@ -16,7 +16,7 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-_RESPONSE_TIMEOUT = 2.0
+_RESPONSE_TIMEOUT = 5
 
 
 class HomeduinoProtocol(asyncio.Protocol):
@@ -140,8 +140,8 @@ class HomeduinoProtocol(asyncio.Protocol):
                     response = self.str_buffer.pop()
                     logger.debug(response)
                     return response.strip()
-            # else:
-            #     raise TimeoutError("Timeout while waiting for command response")
+            else:
+                raise TimeoutError("Timeout while waiting for command response")
         finally:
             self._tx_busy = False
 
