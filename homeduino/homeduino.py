@@ -18,6 +18,17 @@ logger = logging.getLogger(__name__)
 _RESPONSE_TIMEOUT = 1
 
 
+class HomeduinoError(Exception):
+    """Generic Homeduino error."""
+
+
+class ResponseTimeoutError(HomeduinoError):
+    """
+    Response timeout error.
+
+    If the response takes to long to receive.
+    """
+
 class HomeduinoProtocol(asyncio.Protocol):
     rf_receive_callbacks = []
 
@@ -137,12 +148,13 @@ class HomeduinoProtocol(asyncio.Protocol):
             while (datetime.now() - start_time).total_seconds() < _RESPONSE_TIMEOUT:
                 if len(self.str_buffer) > 0:
                     response = self.str_buffer.pop()
-                    logger.debug(response)
+                    logger.debug("Command response received: %s", response)
                     return response.strip()
                 logger.debug("Waiting for command response")
                 await asyncio.sleep(0)
-            else:
-                raise TimeoutError("Timeout while waiting for command response")
+
+            logger.error("Timeout while waiting for command response")
+            raise ResponseTimeoutError("Timeout while waiting for command response")
         finally:
             self._tx_busy = False
 
