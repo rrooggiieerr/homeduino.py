@@ -144,13 +144,13 @@ class HomeduinoProtocol(asyncio.Protocol):
             self.transport.write(data.encode())  # type: ignore
 
             # Wait for response
+            logger.debug("Waiting for command response")
             start_time = datetime.now()
             while (datetime.now() - start_time).total_seconds() < _RESPONSE_TIMEOUT:
                 if len(self.str_buffer) > 0:
                     response = self.str_buffer.pop()
                     logger.debug("Command response received: %s", response)
                     return response.strip()
-                logger.debug("Waiting for command response")
                 await asyncio.sleep(0)
 
             logger.error("Timeout while waiting for command response")
@@ -237,7 +237,11 @@ class Homeduino:
             logger.debug("Pinging Homeduino")
             message = f"PING {time.time()}"
             response = await self.protocol.send(message)
-            return response == message
+            if response == message:
+                logger.debug("Pinging Homeduino successful")
+                return True
+
+            logger.error("Pinging Homeduino failed")
 
         return False
 
