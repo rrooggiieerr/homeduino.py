@@ -85,7 +85,7 @@ class HomeduinoProtocol(asyncio.Protocol):
                     self.handle_rf_receive(line)
                 elif line.startswith("KP "):
                     self.handle_key_press(line)
-                elif line != "":
+                elif line != "" and self._tx_busy:
                     self.str_buffer.append(line)
 
     def handle_ready(self):
