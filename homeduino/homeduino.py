@@ -5,17 +5,19 @@ import sys
 import time
 from asyncio.transports import BaseTransport
 from collections import deque
+from datetime import datetime
 from functools import partial
 from typing import Any, Optional
 
 import serial_asyncio
 from rfcontrol import controller
+from serial.serialutil import SerialException
 from serial_asyncio import SerialTransport
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 _RESPONSE_TIMEOUT = 1
+_BUSY_TIMEOUT = 1
 
 
 class HomeduinoError(Exception):
@@ -28,6 +30,19 @@ class ResponseTimeoutError(HomeduinoError):
 
     If the response takes to long to receive.
     """
+
+
+class DisconnectedError(HomeduinoError):
+    """Homeduino Disconnected error."""
+
+
+class NotReadyError(HomeduinoError):
+    """Homeduino not ready error."""
+
+
+class TooBusyError(HomeduinoError):
+    """Homeduino Disconnected error."""
+
 
 class HomeduinoProtocol(asyncio.Protocol):
     rf_receive_callbacks = []
@@ -74,7 +89,7 @@ class HomeduinoProtocol(asyncio.Protocol):
                 "Error during decode of data, invalid data: %s", invalid_data
             )
         else:
-            logger.debug("received data: %s", decoded_data.strip())
+            logger.debug("Received data: %s", decoded_data.strip())
             self._str_buffer += decoded_data
             while "\r\n" in self._str_buffer:
                 line, self._str_buffer = self._str_buffer.split("\r\n", 1)
@@ -88,11 +103,11 @@ class HomeduinoProtocol(asyncio.Protocol):
                 elif line != "" and self._tx_busy:
                     self.str_buffer.append(line)
 
-    def handle_ready(self):
+    def handle_ready(self) -> None:
         self.ready = True
         logger.info("Homeduino is connected")
 
-    def handle_rf_receive(self, line: str):
+    def handle_rf_receive(self, line: str) -> None:
         logger.debug(line)
 
         # The first 8 numbers are the pulse lengths and the last string of numbers is the pulse sequence
@@ -106,7 +121,7 @@ class HomeduinoProtocol(asyncio.Protocol):
         decoded = controller.decode_pulses(pulse_lengths, pulse_sequence)
 
         if len(decoded) == 0:
-            logger.warn("No protocol for %s %s", pulse_lengths, pulse_sequence)
+            logger.warning("No protocol for %s %s", pulse_lengths, pulse_sequence)
         elif len(self.rf_receive_callbacks) == 0:
             logger.debug("No receive callbacks configured")
         else:
@@ -115,7 +130,7 @@ class HomeduinoProtocol(asyncio.Protocol):
                 for rf_receive_callback in self.rf_receive_callbacks:
                     rf_receive_callback(protocol)
 
-    def handle_key_press(self, line: str):
+    def handle_key_press(self, line: str) -> None:
         logger.debug(line)
         # Ignoring key presses for now
 
@@ -123,21 +138,25 @@ class HomeduinoProtocol(asyncio.Protocol):
         """Encode and put packet string onto write buffer."""
 
         if not self.transport:
-            logger.error("Not connected")
-            return None
+            raise DisconnectedError("Homeduino is not connected")
 
         if not self.ready:
             logger.error("Not ready")
-            return None
+            raise NotReadyError("Homeduino is not ready")
 
+        start_time = datetime.now()
         while self._tx_busy is True:
-            logger.info("Too busy to transmit %s", packet)
-            await asyncio.sleep(0.1)
+            logger.debug("Busy")
+            if (datetime.now() - start_time).total_seconds() < _BUSY_TIMEOUT:
+                await asyncio.sleep(0.1)
+            else:
+                logger.error("Too busy to transmit %s", packet)
+                raise TooBusyError("Homeduino is too busy to transmit")
         self._tx_busy = True
 
         try:
             data = packet + "\n"
-            logger.debug("writing data: %s", repr(data))
+            logger.debug("Writing data: %s", repr(data))
             # type ignore: transport from create_connection is documented to be
             # implementation specific bidirectional, even though typed as
             # BaseTransport
@@ -161,18 +180,17 @@ class HomeduinoProtocol(asyncio.Protocol):
         return None
 
     def connection_lost(self, exc: Optional[Exception]) -> None:
-        logger.info("port closed")
+        logger.info("Port closed")
         if exc:
-            logger.exception("disconnected due to exception")
+            logger.exception("Disconnected due to exception")
         else:
-            logger.info("disconnected because of close/abort.")
+            logger.info("Disconnected because of close/abort")
 
         self.transport = None
         self.ready = False
 
 
 class Homeduino:
-    transport: SerialTransport = None
     protocol: HomeduinoProtocol = None
     rf_receive_callbacks = []
 
@@ -186,7 +204,7 @@ class Homeduino:
     ):
         # Test if the device exists
         if not os.path.exists(serial_port):
-            logger.warn("No such file or directory: '%s'", serial_port)
+            logger.warning("No such file or directory: '%s'", serial_port)
 
         self.serial_port = serial_port
         # self.receive_pin = receive_pin
@@ -199,60 +217,73 @@ class Homeduino:
         self.loop = loop
 
     async def connect(self) -> bool:
-        if self.transport is None:
-            protocol_factory = partial(HomeduinoProtocol, loop=self.loop)
+        if not self.connected():
+            try:
+                protocol_factory = partial(HomeduinoProtocol, loop=self.loop)
 
-            (
-                self.transport,
-                self.protocol,
-            ) = await serial_asyncio.create_serial_connection(
-                self.loop,
-                protocol_factory,
-                self.serial_port,
-                baudrate=115200,
-                bytesize=serial_asyncio.serial.EIGHTBITS,
-                parity=serial_asyncio.serial.PARITY_NONE,
-                stopbits=serial_asyncio.serial.STOPBITS_ONE,
-            )
+                (
+                    _transport,
+                    self.protocol,
+                ) = await serial_asyncio.create_serial_connection(
+                    self.loop,
+                    protocol_factory,
+                    self.serial_port,
+                    baudrate=115200,
+                    bytesize=serial_asyncio.serial.EIGHTBITS,
+                    parity=serial_asyncio.serial.PARITY_NONE,
+                    stopbits=serial_asyncio.serial.STOPBITS_ONE,
+                )
 
-            while not self.protocol.ready:
-                await asyncio.sleep(0.1)
+                while not self.protocol.ready:
+                    await asyncio.sleep(0.1)
 
-            await self.protocol.set_receive_interrupt(self.receive_interrupt)
+                await self.protocol.set_receive_interrupt(self.receive_interrupt)
 
-            for rf_receive_callback in self.rf_receive_callbacks:
-                self.protocol.add_rf_receive_callback(rf_receive_callback)
+                for rf_receive_callback in self.rf_receive_callbacks:
+                    self.protocol.add_rf_receive_callback(rf_receive_callback)
 
-            return True
+                return True
+            except SerialException as ex:
+                logger.error(ex)
 
         return False
 
-    def disconnect(self):
-        if self.transport is not None:
+    def connected(self) -> bool:
+        if self.protocol is None or self.protocol.transport is None:
+            return False
+
+        return True
+
+    def disconnect(self) -> None:
+        if self.connected():
             logger.debug("Disconnecting Homeduino")
-            self.transport.close()
+            self.protocol.transport.close()
+            self.protocol = None
 
     async def ping(self) -> bool:
-        if self.protocol is not None:
-            logger.debug("Pinging Homeduino")
-            message = f"PING {time.time()}"
-            response = await self.protocol.send(message)
-            if response == message:
-                logger.debug("Pinging Homeduino successful")
-                return True
+        if not self.connected():
+            raise DisconnectedError("Homeduino is not connected")
 
-            logger.error("Pinging Homeduino failed")
+        logger.debug("Pinging Homeduino")
+        message = f"PING {time.time()}"
+        response = await self.protocol.send(message)
+        if response == message:
+            logger.debug("Pinging Homeduino successful")
+            return True
 
+        logger.error("Pinging Homeduino failed")
         return False
 
-    def add_rf_receive_callback(self, rf_receive_callback):
-        if self.protocol is not None:
+    def add_rf_receive_callback(self, rf_receive_callback) -> None:
+        self.rf_receive_callbacks.append(rf_receive_callback)
+        if self.connected():
             self.protocol.add_rf_receive_callback(rf_receive_callback)
-        else:
-            self.rf_receive_callbacks.append(rf_receive_callback)
 
     async def rf_send(self, rf_protocol: str, values) -> bool:
-        if self.protocol is not None and self.send_pin is not None:
+        if not self.connected():
+            raise DisconnectedError("Homeduino is not connected")
+
+        if self.send_pin is not None:
             rf_protocol = getattr(sys.modules[controller.__name__], rf_protocol)
             logger.debug(rf_protocol)
 
@@ -270,9 +301,11 @@ class Homeduino:
 
             response = await self.protocol.send(packet)
             return response == "ACK"
+
         return False
 
     async def send(self, command) -> str:
-        if self.protocol is not None:
-            return await self.protocol.send(command)
-        return None
+        if not self.connected():
+            raise DisconnectedError("Homeduino is not connected")
+
+        return await self.protocol.send(command)
