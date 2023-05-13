@@ -7,7 +7,7 @@ from asyncio.transports import BaseTransport
 from collections import deque
 from datetime import datetime
 from functools import partial
-from typing import Any, Optional
+from typing import Any, Optional, Final
 
 import serial_asyncio
 from rfcontrol import controller
@@ -15,6 +15,11 @@ from serial.serialutil import SerialException
 from serial_asyncio import SerialTransport
 
 logger = logging.getLogger(__name__)
+
+BAUD_RATES: Final = [57600, 115200]
+DEFAULT_BAUDRATE: Final = 115200
+DEFAULT_RECEIVE_PIN: Final = 2
+DEFAULT_SEND_PIN: Final = 4
 
 _RESPONSE_TIMEOUT = 1
 _BUSY_TIMEOUT = 1
@@ -102,6 +107,8 @@ class HomeduinoProtocol(asyncio.Protocol):
                     self.handle_key_press(line)
                 elif line != "" and self._tx_busy:
                     self.str_buffer.append(line)
+                elif line != "":
+                    logger.error(f"Unhandled data received '{line}'")
 
     def handle_ready(self) -> None:
         self.ready = True
@@ -197,8 +204,9 @@ class Homeduino:
     def __init__(
         self,
         serial_port: str,
-        receive_pin: int,
-        send_pin: int,
+        baud_rate: int = DEFAULT_BAUDRATE,
+        receive_pin: int = DEFAULT_RECEIVE_PIN,
+        send_pin: int = DEFAULT_SEND_PIN,
         dht_pin: int = None,
         loop=None,
     ):
@@ -207,7 +215,7 @@ class Homeduino:
             logger.warning("No such file or directory: '%s'", serial_port)
 
         self.serial_port = serial_port
-        # self.receive_pin = receive_pin
+        self.baud_rate = baud_rate
         self.receive_interrupt = receive_pin - 2
         self.send_pin = send_pin
         self.dht_pin = dht_pin
@@ -228,13 +236,14 @@ class Homeduino:
                     self.loop,
                     protocol_factory,
                     self.serial_port,
-                    baudrate=115200,
+                    baudrate=self.baud_rate,
                     bytesize=serial_asyncio.serial.EIGHTBITS,
                     parity=serial_asyncio.serial.PARITY_NONE,
                     stopbits=serial_asyncio.serial.STOPBITS_ONE,
                 )
 
                 while not self.protocol.ready:
+                    #TODO: Timeout
                     await asyncio.sleep(0.1)
 
                 await self.protocol.set_receive_interrupt(self.receive_interrupt)
