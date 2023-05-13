@@ -7,7 +7,7 @@ from asyncio.transports import BaseTransport
 from collections import deque
 from datetime import datetime
 from functools import partial
-from typing import Any, Optional, Final
+from typing import Any, Final, Optional
 
 import serial_asyncio
 from rfcontrol import controller
@@ -16,12 +16,13 @@ from serial_asyncio import SerialTransport
 
 logger = logging.getLogger(__name__)
 
-BAUD_RATES: Final = [57600, 115200]
-DEFAULT_BAUDRATE: Final = 115200
+DEFAULT_BAUD_RATE: Final = 115200
+BAUD_RATES: Final = [57600, DEFAULT_BAUD_RATE]
 DEFAULT_RECEIVE_PIN: Final = 2
 DEFAULT_SEND_PIN: Final = 4
 
 _RESPONSE_TIMEOUT = 1
+_READY_TIMEOUT = 5
 _BUSY_TIMEOUT = 1
 
 
@@ -108,7 +109,7 @@ class HomeduinoProtocol(asyncio.Protocol):
                 elif line != "" and self._tx_busy:
                     self.str_buffer.append(line)
                 elif line != "":
-                    logger.error(f"Unhandled data received '{line}'")
+                    logger.error("Unhandled data received '%s'", line)
 
     def handle_ready(self) -> None:
         self.ready = True
@@ -204,7 +205,7 @@ class Homeduino:
     def __init__(
         self,
         serial_port: str,
-        baud_rate: int = DEFAULT_BAUDRATE,
+        baud_rate: int = DEFAULT_BAUD_RATE,
         receive_pin: int = DEFAULT_RECEIVE_PIN,
         send_pin: int = DEFAULT_SEND_PIN,
         dht_pin: int = None,
@@ -242,16 +243,25 @@ class Homeduino:
                     stopbits=serial_asyncio.serial.STOPBITS_ONE,
                 )
 
-                while not self.protocol.ready:
-                    #TODO: Timeout
+                start_time = datetime.now()
+                while (datetime.now() - start_time).total_seconds() < _READY_TIMEOUT:
+                    if self.protocol.ready:
+                        await self.protocol.set_receive_interrupt(
+                            self.receive_interrupt
+                        )
+
+                        for rf_receive_callback in self.rf_receive_callbacks:
+                            self.protocol.add_rf_receive_callback(rf_receive_callback)
+
+                        return True
+
+                    logger.debug("Waiting for Homeduino to become ready")
                     await asyncio.sleep(0.1)
 
-                await self.protocol.set_receive_interrupt(self.receive_interrupt)
-
-                for rf_receive_callback in self.rf_receive_callbacks:
-                    self.protocol.add_rf_receive_callback(rf_receive_callback)
-
-                return True
+                logger.error("Timeout while waiting for Homeduino to become ready")
+                raise ResponseTimeoutError(
+                    "Timeout while waiting for Homeduino to become ready"
+                )
             except SerialException as ex:
                 logger.error(ex)
 
@@ -263,11 +273,21 @@ class Homeduino:
 
         return True
 
-    def disconnect(self) -> None:
+    async def disconnect(self) -> bool:
         if self.connected():
             logger.debug("Disconnecting Homeduino")
             self.protocol.transport.close()
-            self.protocol = None
+
+            start_time = datetime.now()
+            while (datetime.now() - start_time).total_seconds() < _READY_TIMEOUT:
+                if not self.protocol.ready:
+                    self.protocol = None
+                    return True
+
+                logger.debug("Waiting for Homeduino to disconnect")
+                await asyncio.sleep(0.1)
+
+        return False
 
     async def ping(self) -> bool:
         if not self.connected():
