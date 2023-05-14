@@ -1,3 +1,10 @@
-__version__ = "0.0.6"
+__version__ = "0.0.7"
 
-from homeduino.homeduino import Homeduino
+from homeduino.homeduino import (
+    BAUD_RATES,
+    DEFAULT_BAUD_RATE,
+    DEFAULT_RECEIVE_PIN,
+    DEFAULT_SEND_PIN,
+    Homeduino,
+    NotReadyError,
+)
