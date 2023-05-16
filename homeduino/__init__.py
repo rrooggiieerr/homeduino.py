@@ -1,4 +1,4 @@
-__version__ = "0.0.7"
+__version__ = "0.0.7.1"
 
 from homeduino.homeduino import (
     BAUD_RATES,
@@ -7,4 +7,5 @@ from homeduino.homeduino import (
     DEFAULT_SEND_PIN,
     Homeduino,
     NotReadyError,
+    ResponseTimeoutError
 )
