@@ -154,13 +154,12 @@ class HomeduinoProtocol(asyncio.Protocol):
             raise NotReadyError("Homeduino is not ready")
 
         start_time = datetime.now()
-        while self._tx_busy is True:
+        while self._tx_busy:
+            if (datetime.now() - start_time).total_seconds() > _BUSY_TIMEOUT:
+                logger.error("Too busy to send %s", packet)
+                raise TooBusyError("Homeduino is too busy to send a command")
             logger.debug("Busy")
-            if (datetime.now() - start_time).total_seconds() < _BUSY_TIMEOUT:
-                await asyncio.sleep(0.01)
-            else:
-                logger.error("Too busy to transmit %s", packet)
-                raise TooBusyError("Homeduino is too busy to transmit")
+            await asyncio.sleep(0)
         self._tx_busy = True
 
         try:
@@ -172,17 +171,17 @@ class HomeduinoProtocol(asyncio.Protocol):
             self.transport.write(data.encode())  # type: ignore
 
             # Wait for response
-            logger.debug("Waiting for command response")
             start_time = datetime.now()
-            while (datetime.now() - start_time).total_seconds() < _RESPONSE_TIMEOUT:
-                if len(self.str_buffer) > 0:
-                    response = self.str_buffer.pop()
-                    logger.debug("Command response received: %s", response)
-                    return response.strip()
-                await asyncio.sleep(0.01)
+            while len(self.str_buffer) == 0:
+                if (datetime.now() - start_time).total_seconds() > _RESPONSE_TIMEOUT:
+                    logger.error("Timeout while waiting for command response")
+                    raise ResponseTimeoutError("Timeout while waiting for command response")
+                logger.debug("Waiting for command response")
+                await asyncio.sleep(0)
 
-            logger.error("Timeout while waiting for command response")
-            raise ResponseTimeoutError("Timeout while waiting for command response")
+            response = self.str_buffer.pop()
+            logger.debug("Command response received: %s", response)
+            return response.strip()
         finally:
             self._tx_busy = False
 
@@ -245,24 +244,23 @@ class Homeduino:
                 )
 
                 start_time = datetime.now()
-                while (datetime.now() - start_time).total_seconds() < _READY_TIMEOUT:
-                    if self.protocol.ready:
-                        await self.protocol.set_receive_interrupt(
-                            self.receive_interrupt
+                while not self.protocol.ready:
+                    if (datetime.now() - start_time).total_seconds() > _READY_TIMEOUT:
+                        logger.error("Timeout while waiting for Homeduino to become ready")
+                        raise ResponseTimeoutError(
+                            "Timeout while waiting for Homeduino to become ready"
                         )
-
-                        for rf_receive_callback in self.rf_receive_callbacks:
-                            self.protocol.add_rf_receive_callback(rf_receive_callback)
-
-                        return True
-
                     logger.debug("Waiting for Homeduino to become ready")
-                    await asyncio.sleep(0.01)
+                    await asyncio.sleep(0)
 
-                logger.error("Timeout while waiting for Homeduino to become ready")
-                raise ResponseTimeoutError(
-                    "Timeout while waiting for Homeduino to become ready"
+                await self.protocol.set_receive_interrupt(
+                    self.receive_interrupt
                 )
+
+                for rf_receive_callback in self.rf_receive_callbacks:
+                    self.protocol.add_rf_receive_callback(rf_receive_callback)
+
+                return True
             except SerialException as ex:
                 logger.error(ex)
 
@@ -280,13 +278,15 @@ class Homeduino:
             self.protocol.transport.close()
 
             start_time = datetime.now()
-            while (datetime.now() - start_time).total_seconds() < _READY_TIMEOUT:
-                if not self.protocol.ready:
-                    self.protocol = None
-                    return True
-
+            while self.protocol.ready:
+                if (datetime.now() - start_time).total_seconds() > _READY_TIMEOUT:
+                    break
                 logger.debug("Waiting for Homeduino to disconnect")
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0)
+
+            self.protocol = None
+            return True
+            logger.debug("Homeduino disconnected")
 
         return False
 
