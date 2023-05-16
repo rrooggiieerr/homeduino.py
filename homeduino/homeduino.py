@@ -122,7 +122,7 @@ class HomeduinoProtocol(asyncio.Protocol):
         # The first 8 numbers are the pulse lengths and the last string of numbers is the pulse sequence
         parts = line.split(" ")
 
-        pulse_lengths = [int(i) for i in parts[2:9]]
+        pulse_lengths = [int(i) for i in parts[2:10]]
         # logger.debug("pulse lengths: %s", pulse_lengths)
         pulse_sequence = parts[10]
 
