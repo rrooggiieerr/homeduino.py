@@ -280,7 +280,10 @@ class Homeduino:
             start_time = datetime.now()
             while self.protocol.ready:
                 if (datetime.now() - start_time).total_seconds() > _READY_TIMEOUT:
-                    break
+                    logger.error("Timeout while waiting for Homeduino to disconnect")
+                    raise ResponseTimeoutError(
+                        "Timeout while waiting for Homeduino to disconnect"
+                    )
                 logger.debug("Waiting for Homeduino to disconnect")
                 await asyncio.sleep(0)
 

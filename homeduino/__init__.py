@@ -1,4 +1,4 @@
-__version__ = "0.0.7.2"
+__version__ = "0.0.7.3"
 
 from homeduino.homeduino import (
     BAUD_RATES,
