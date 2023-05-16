@@ -157,7 +157,7 @@ class HomeduinoProtocol(asyncio.Protocol):
         while self._tx_busy is True:
             logger.debug("Busy")
             if (datetime.now() - start_time).total_seconds() < _BUSY_TIMEOUT:
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.01)
             else:
                 logger.error("Too busy to transmit %s", packet)
                 raise TooBusyError("Homeduino is too busy to transmit")
@@ -179,7 +179,7 @@ class HomeduinoProtocol(asyncio.Protocol):
                     response = self.str_buffer.pop()
                     logger.debug("Command response received: %s", response)
                     return response.strip()
-                await asyncio.sleep(0)
+                await asyncio.sleep(0.01)
 
             logger.error("Timeout while waiting for command response")
             raise ResponseTimeoutError("Timeout while waiting for command response")
@@ -257,7 +257,7 @@ class Homeduino:
                         return True
 
                     logger.debug("Waiting for Homeduino to become ready")
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.01)
 
                 logger.error("Timeout while waiting for Homeduino to become ready")
                 raise ResponseTimeoutError(
@@ -286,7 +286,7 @@ class Homeduino:
                     return True
 
                 logger.debug("Waiting for Homeduino to disconnect")
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.01)
 
         return False
 
