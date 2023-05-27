@@ -251,16 +251,16 @@ class Homeduino:
                 start_time = datetime.now()
                 while not self.protocol.ready:
                     if (datetime.now() - start_time).total_seconds() > _READY_TIMEOUT:
-                        logger.error("Timeout while waiting for Homeduino to become ready")
+                        logger.error(
+                            "Timeout while waiting for Homeduino to become ready"
+                        )
                         raise ResponseTimeoutError(
                             "Timeout while waiting for Homeduino to become ready"
                         )
                     logger.debug("Waiting for Homeduino to become ready")
                     await asyncio.sleep(0.01)
 
-                await self.protocol.set_receive_interrupt(
-                    self.receive_interrupt
-                )
+                await self.protocol.set_receive_interrupt(self.receive_interrupt)
 
                 for rf_receive_callback in self.rf_receive_callbacks:
                     self.protocol.add_rf_receive_callback(rf_receive_callback)
@@ -354,6 +354,7 @@ class Homeduino:
     @staticmethod
     def get_protocols() -> [str]:
         """Returns the supported protocols in natural sorted order"""
+
         def convert(text):
             return int(text) if text.isdigit() else text.lower()
 
