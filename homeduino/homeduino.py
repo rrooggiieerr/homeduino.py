@@ -302,6 +302,9 @@ class Homeduino:
         if not self.connected():
             raise DisconnectedError("Homeduino is not connected")
 
+        if self.protocol.busy():
+            return True
+
         logger.debug("Pinging Homeduino")
         message = f"PING {time.time()}"
         response = await self.protocol.send(message)
