@@ -344,15 +344,13 @@ class Homeduino:
         return await self.protocol.send(command)
 
     @staticmethod
-    def get_protocols() -> []:
+    def get_protocols() -> [str]:
+        """Returns the supported protocols in natural sorted order"""
         def convert(text):
             return int(text) if text.isdigit() else text.lower()
 
         def alphanum_key(key: str):
             return [convert(c) for c in re.split("([0-9]+)", key)]
 
-        def natural_sort(li):
-            return sorted(li, key=alphanum_key)
-
         protocol_names = [protocol.name for protocol in controller.get_all_protocols()]
-        return natural_sort(protocol_names)
+        return sorted(protocol_names, key=alphanum_key)
