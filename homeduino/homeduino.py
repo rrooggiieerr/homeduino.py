@@ -288,8 +288,8 @@ class Homeduino:
                 await asyncio.sleep(0.01)
 
             self.protocol = None
-            return True
             logger.debug("Homeduino disconnected")
+            return True
 
         return False
 
