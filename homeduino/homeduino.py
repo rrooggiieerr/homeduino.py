@@ -57,7 +57,7 @@ class HomeduinoProtocol(asyncio.Protocol):
     transport: SerialTransport = None
 
     ready = False
-    _tx_busy = False
+    _tx_busy_since = None
     _ack = None
 
     _str_buffer = ""
@@ -107,7 +107,7 @@ class HomeduinoProtocol(asyncio.Protocol):
                     self.handle_rf_receive(line)
                 elif line.startswith("KP "):
                     self.handle_key_press(line)
-                elif line != "" and self._tx_busy:
+                elif line != "" and self.busy():
                     self.str_buffer.append(line)
                 elif line != "":
                     logger.error("Unhandled data received '%s'", line)
@@ -153,14 +153,13 @@ class HomeduinoProtocol(asyncio.Protocol):
             logger.error("Not ready")
             raise NotReadyError("Homeduino is not ready")
 
-        start_time = datetime.now()
-        while self._tx_busy:
-            if (datetime.now() - start_time).total_seconds() > _BUSY_TIMEOUT:
+        while self.busy():
+            if (datetime.now() - self._tx_busy_since).total_seconds() > _BUSY_TIMEOUT:
                 logger.error("Too busy to send %s", packet)
                 raise TooBusyError("Homeduino is too busy to send a command")
             logger.debug("Busy")
             await asyncio.sleep(0.01)
-        self._tx_busy = True
+        self._tx_busy_since = datetime.now()
 
         try:
             data = packet + "\n"
@@ -171,11 +170,14 @@ class HomeduinoProtocol(asyncio.Protocol):
             self.transport.write(data.encode())  # type: ignore
 
             # Wait for response
-            start_time = datetime.now()
             while len(self.str_buffer) == 0:
-                if (datetime.now() - start_time).total_seconds() > _RESPONSE_TIMEOUT:
+                if (
+                    datetime.now() - self._tx_busy_since
+                ).total_seconds() > _RESPONSE_TIMEOUT:
                     logger.error("Timeout while waiting for command response")
-                    raise ResponseTimeoutError("Timeout while waiting for command response")
+                    raise ResponseTimeoutError(
+                        "Timeout while waiting for command response"
+                    )
                 logger.debug("Waiting for command response")
                 await asyncio.sleep(0.01)
 
@@ -183,9 +185,12 @@ class HomeduinoProtocol(asyncio.Protocol):
             logger.debug("Command response received: %s", response)
             return response.strip()
         finally:
-            self._tx_busy = False
+            self._tx_busy_since = None
 
         return None
+
+    def busy(self):
+        return self._tx_busy_since is not None
 
     def connection_lost(self, exc: Optional[Exception]) -> None:
         logger.info("Port closed")
