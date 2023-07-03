@@ -143,13 +143,13 @@ class HomeduinoProtocol(asyncio.Protocol):
         logger.debug(line)
         # Ignoring key presses for now
 
-    async def send(self, packet: str) -> str:
+    async def send(self, packet: str, ignore_ready: bool = False) -> str:
         """Encode and put packet string onto write buffer."""
 
         if not self.transport:
             raise DisconnectedError("Homeduino is not connected")
 
-        if not self.ready:
+        if not ignore_ready and not self.ready:
             logger.error("Not ready")
             raise NotReadyError("Homeduino is not ready")
 
@@ -251,14 +251,20 @@ class Homeduino:
                 start_time = datetime.now()
                 while not self.protocol.ready:
                     if (datetime.now() - start_time).total_seconds() > _READY_TIMEOUT:
-                        logger.error(
-                            "Timeout while waiting for Homeduino to become ready"
-                        )
+                        break
+                    logger.debug("Waiting for Homeduino to become ready")
+                    await asyncio.sleep(0.01)
+
+                if not self.protocol.ready:
+                    logger.error(
+                        "Timeout while waiting for Homeduino to become ready, trying to ping instead"
+                    )
+                    if self._ping(True):
+                        self.protocol.handle_ready()
+                    else:
                         raise ResponseTimeoutError(
                             "Timeout while waiting for Homeduino to become ready"
                         )
-                    logger.debug("Waiting for Homeduino to become ready")
-                    await asyncio.sleep(0.01)
 
                 await self.protocol.set_receive_interrupt(self.receive_interrupt)
 
@@ -298,6 +304,17 @@ class Homeduino:
 
         return False
 
+    async def _ping(self, ignore_ready: bool = False) -> bool:
+        logger.debug("Pinging Homeduino")
+        message = f"PING {time.time()}"
+        response = await self.protocol.send(message, ignore_ready)
+        if response == message:
+            logger.debug("Pinging Homeduino successful")
+            return True
+
+        logger.error("Pinging Homeduino failed")
+        return False
+
     async def ping(self) -> bool:
         if not self.connected():
             raise DisconnectedError("Homeduino is not connected")
@@ -305,15 +322,7 @@ class Homeduino:
         if self.protocol.busy():
             return True
 
-        logger.debug("Pinging Homeduino")
-        message = f"PING {time.time()}"
-        response = await self.protocol.send(message)
-        if response == message:
-            logger.debug("Pinging Homeduino successful")
-            return True
-
-        logger.error("Pinging Homeduino failed")
-        return False
+        return await self._ping()
 
     def add_rf_receive_callback(self, rf_receive_callback) -> None:
         self.rf_receive_callbacks.append(rf_receive_callback)
