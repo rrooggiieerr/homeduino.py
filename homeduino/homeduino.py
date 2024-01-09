@@ -259,7 +259,7 @@ class Homeduino:
                     logger.error(
                         "Timeout while waiting for Homeduino to become ready, trying to ping instead"
                     )
-                    if self._ping(True):
+                    if await self._ping(True):
                         self.protocol.handle_ready()
                     else:
                         raise ResponseTimeoutError(
