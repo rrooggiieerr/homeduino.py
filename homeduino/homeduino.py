@@ -60,7 +60,6 @@ class HomeduinoProtocol(asyncio.Protocol):
     ready = False
     _tx_busy_since = None
     _last_rf_send = None
-    _ack = None
 
     _str_buffer = ""
     str_buffer = deque()
