@@ -25,6 +25,7 @@ DEFAULT_SEND_PIN: Final = 4
 _RESPONSE_TIMEOUT = 2
 _READY_TIMEOUT = 5
 _BUSY_TIMEOUT = 1
+_RF_SEND_DELAY = 0.2
 
 
 class HomeduinoError(Exception):
@@ -58,6 +59,7 @@ class HomeduinoProtocol(asyncio.Protocol):
 
     ready = False
     _tx_busy_since = None
+    _last_rf_send = None
     _ack = None
 
     _str_buffer = ""
@@ -161,6 +163,13 @@ class HomeduinoProtocol(asyncio.Protocol):
             await asyncio.sleep(0.01)
         self._tx_busy_since = datetime.now()
 
+        is_rf_send = packet.startswith("RF send ")
+        if is_rf_send and self._last_rf_send is not None:
+            # Allow some time between rf send commands to prevent flooding
+            while (datetime.now() - self._last_rf_send).total_seconds() <= _RF_SEND_DELAY:
+                logger.debug("RF send delay")
+                await asyncio.sleep(0.01)
+
         try:
             data = packet + "\n"
             logger.debug("Writing data: %s", repr(data))
@@ -185,6 +194,10 @@ class HomeduinoProtocol(asyncio.Protocol):
             logger.debug("Command response received: %s", response)
             return response.strip()
         finally:
+            if is_rf_send:
+                # Set last RF send timestamp
+                self._last_rf_send = datetime.now()
+
             self._tx_busy_since = None
 
         return None
