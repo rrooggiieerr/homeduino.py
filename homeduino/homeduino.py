@@ -53,8 +53,6 @@ class TooBusyError(HomeduinoError):
 
 
 class HomeduinoProtocol(asyncio.Protocol):
-    rf_receive_callbacks = []
-
     transport: SerialTransport = None
 
     ready = False
@@ -62,7 +60,6 @@ class HomeduinoProtocol(asyncio.Protocol):
     _last_rf_send = None
 
     _str_buffer = ""
-    str_buffer = deque()
 
     def __init__(
         self,
@@ -74,6 +71,9 @@ class HomeduinoProtocol(asyncio.Protocol):
             self.loop = loop
         else:
             self.loop = asyncio.get_event_loop()
+
+        self.rf_receive_callbacks = []
+        self.str_buffer = deque()
 
     async def set_receive_interrupt(self, receive_interrupt: int) -> bool:
         if receive_interrupt is not None:
@@ -217,7 +217,6 @@ class HomeduinoProtocol(asyncio.Protocol):
 
 class Homeduino:
     protocol: HomeduinoProtocol = None
-    rf_receive_callbacks = []
 
     def __init__(
         self,
@@ -241,6 +240,8 @@ class Homeduino:
         if loop is None:
             loop = asyncio.get_event_loop()
         self.loop = loop
+
+        self.rf_receive_callbacks = []
 
     async def connect(self) -> bool:
         if not self.connected():
