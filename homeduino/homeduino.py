@@ -223,7 +223,6 @@ class Homeduino:
         receive_pin: int = DEFAULT_RECEIVE_PIN,
         send_pin: int = DEFAULT_SEND_PIN,
         dht_pin: int = None,
-        loop=None,
     ):
         # Test if the device exists
         if not os.path.exists(serial_port):
@@ -235,13 +234,12 @@ class Homeduino:
         self.send_pin = send_pin
         self.dht_pin = dht_pin
 
-        if loop is None:
-            loop = asyncio.get_event_loop()
-        self.loop = loop
-
         self.rf_receive_callbacks = []
 
-    async def connect(self) -> bool:
+    async def connect(self, loop=None) -> bool:
+        if loop is None:
+            loop = asyncio.get_event_loop()
+
         if not self.connected():
             try:
                 protocol_factory = partial(HomeduinoProtocol)
@@ -250,7 +248,7 @@ class Homeduino:
                     _transport,
                     self.protocol,
                 ) = await serial_asyncio.create_serial_connection(
-                    self.loop,
+                    loop,
                     protocol_factory,
                     self.serial_port,
                     baudrate=self.baud_rate,
