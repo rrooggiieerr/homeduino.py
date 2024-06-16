@@ -3,6 +3,7 @@ Created on 23 Nov 2022
 
 @author: Rogier van Staveren
 """
+
 import argparse
 import asyncio
 import json
@@ -11,7 +12,7 @@ import sys
 
 from serial.serialutil import SerialException
 
-from homeduino import Homeduino, DEFAULT_RECEIVE_PIN, DEFAULT_SEND_PIN
+from homeduino import DEFAULT_RECEIVE_PIN, DEFAULT_SEND_PIN, Homeduino
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,7 +21,9 @@ def rf_receive_callback(decoded):
     _LOGGER.info("%s %s", decoded["protocol"], json.dumps(decoded["values"]))
 
 
-async def main(homeduino: Homeduino, action: str, protocol: str = None, values: str = None):
+async def main(
+    homeduino: Homeduino, action: str, protocol: str = None, values: str = None
+):
     try:
         _LOGGER.info("Connecting to Homeduino")
         if not await homeduino.connect():
@@ -48,11 +51,14 @@ async def main(homeduino: Homeduino, action: str, protocol: str = None, values: 
 
     return 0
 
+
 if __name__ == "__main__":
     # Read command line arguments
     argparser = argparse.ArgumentParser()
     argparser.add_argument("port")
-    argparser.add_argument("receive_pin", nargs="?", type=int, default=DEFAULT_RECEIVE_PIN)
+    argparser.add_argument(
+        "receive_pin", nargs="?", type=int, default=DEFAULT_RECEIVE_PIN
+    )
     argparser.add_argument("send_pin", nargs="?", type=int, default=DEFAULT_SEND_PIN)
     argparser.add_argument("action", choices=["listen", "send"])
     argparser.add_argument("protocol", nargs="?")
@@ -68,11 +74,16 @@ if __name__ == "__main__":
     else:
         logging.basicConfig(format="%(message)s", level=logging.INFO)
 
-
     try:
         loop = asyncio.new_event_loop()
-        homeduino = Homeduino(args.port, receive_pin=args.receive_pin, send_pin=args.send_pin, loop=loop)
-        sys.exit(loop.run_until_complete(main(homeduino, args.action, args.protocol, args.values)))
+        homeduino = Homeduino(
+            args.port, receive_pin=args.receive_pin, send_pin=args.send_pin, loop=loop
+        )
+        sys.exit(
+            loop.run_until_complete(
+                main(homeduino, args.action, args.protocol, args.values)
+            )
+        )
     finally:
         _LOGGER.debug("Closing Loop")
         loop.close()
