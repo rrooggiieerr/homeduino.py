@@ -1,6 +1,8 @@
-__version__ = "0.0.12"
-
-from homeduino.homeduino import (
+try:
+    from ._version import __version__
+except ModuleNotFoundError:
+    pass
+from .homeduino import (
     BAUD_RATES,
     DEFAULT_BAUD_RATE,
     DEFAULT_RECEIVE_PIN,

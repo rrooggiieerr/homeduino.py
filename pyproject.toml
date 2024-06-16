@@ -1,22 +1,33 @@
 [build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.24", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "homeduino/_version.py"
+
+[tool.hatch.version]
+source = "vcs"
 
 [project]
 name = "homeduino"
-version = "0.0.12"
+dynamic = ["version"]
 license = {text = "Apache-2.0"}
 authors = [
-    { name="Rogier van Staveren" }
+    { name="Rogier van Staveren", email="rogier@batoid.com" }
 ]
 description = "Homeduino library"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.11"
 classifiers = [
-    "Programming Language :: Python :: 3",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
-    "Operating System :: OS Independent",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Home Automation",
+    "Topic :: Software Development :: Libraries :: Python Modules"
 ]
 dependencies = [
     "pyserial-asyncio==0.6",
@@ -24,13 +35,25 @@ dependencies = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/rrooggiieerr/homeduino.py"
-"Bug Tracker" = "https://github.com/rrooggiieerr/homeduino.py/issues"
-
-[tool.black]
-target-version = ["py39", "py310"]
-exclude = 'generated'
+Homepage = "https://github.com/rrooggiieerr/homeduino.py"
+Issues = "https://github.com/rrooggiieerr/homeduino.py/issues"
 
 [tool.isort]
 # https://github.com/PyCQA/isort/wiki/isort-Settings
 profile = "black"
+skip = "homeduino/_version.py"
+
+[tool.black]
+exclude = "homeduino/_version.py"
+
+[tool.pylint]
+ignore = "_version.py"
+recursive = "y"
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "homeduino"
+
+[[tool.mypy.overrides]]
+module = ["*._version", "serial.*", "serial_asyncio.*", "rfcontrol.*"]
+ignore_missing_imports = true
