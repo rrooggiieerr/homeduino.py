@@ -10,10 +10,10 @@ from datetime import datetime
 from functools import partial
 from typing import Any, Final, Optional
 
-import serial_asyncio
+import serial_asyncio_fast as serial_asyncio
 from rfcontrol import controller
 from serial.serialutil import SerialException
-from serial_asyncio import SerialTransport
+from serial_asyncio_fast import SerialTransport
 
 logger = logging.getLogger(__name__)
 
