@@ -69,7 +69,8 @@ if __name__ == "__main__":
 
     if args.debugLogging:
         logging.basicConfig(
-            format="%(asctime)s %(levelname)-8s %(filename)s:%(lineno)d %(message)s", level=logging.DEBUG
+            format="%(asctime)s %(levelname)-8s %(filename)s:%(lineno)d %(message)s",
+            level=logging.DEBUG,
         )
     else:
         logging.basicConfig(format="%(message)s", level=logging.INFO)
