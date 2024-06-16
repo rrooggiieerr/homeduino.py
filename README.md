@@ -11,6 +11,33 @@
 
 ## Introduction
 
+Python library for using various 433 Mhz devices and sensors with a connected Arduino with homeduino
+sketch.
+
+## Features
+
+## Hardware
+
+## Installation
+
+You can install the Python Homeduino library using the Python package manager PIP:
+
+`pip3 install homeduino`
+
+## `homeduino` CLI
+
+You can use the Python Homeduino library directly from the command line to listen to or send
+messages.
+
+`python3 -m homeduino <port> <receive_pin> <send_pin> listen`
+`python3 -m homeduino <port> <receive_pin> <send_pin> send <protocol> <values>`
+
+### Troubleshooting
+
+You can add the `--debug` flag to the CLI command to get a more details on what's going on. Like so:
+
+`python3 -m homeduino <port> <key> --debug`
+
 ## Support my work
 
 Do you enjoy using this Python library? Then consider supporting my work using one of the following
