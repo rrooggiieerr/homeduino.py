@@ -26,6 +26,19 @@ _RESPONSE_TIMEOUT = 2
 _READY_TIMEOUT = 5
 _BUSY_TIMEOUT = 1
 _RF_SEND_DELAY = 0.2
+_PING_INTERVAL = 5
+_ALLOWED_FAILED_PINGS = 1
+
+background_tasks = set()
+
+
+def _add_background_task(task: asyncio.Task) -> None:
+    # Add task to the set. This creates a strong reference.
+    background_tasks.add(task)
+
+    # To prevent keeping references to finished tasks forever, make each task remove its own
+    # reference from the set after completion:
+    task.add_done_callback(background_tasks.discard)
 
 
 class HomeduinoError(Exception):
@@ -56,10 +69,10 @@ class HomeduinoProtocol(asyncio.Protocol):
     transport: SerialTransport = None
 
     ready = False
-    _tx_busy_since = None
     _last_rf_send = None
 
     _str_buffer = ""
+    _awaiting_response = False
 
     def __init__(
         self,
@@ -67,7 +80,7 @@ class HomeduinoProtocol(asyncio.Protocol):
     ):
         """Initialize class."""
         self.rf_receive_callbacks = []
-        self.str_buffer = deque()
+        self.response_buffer = deque()
 
     async def set_receive_interrupt(self, receive_interrupt: int) -> bool:
         if receive_interrupt is not None:
@@ -102,8 +115,8 @@ class HomeduinoProtocol(asyncio.Protocol):
                     self.handle_rf_receive(line)
                 elif line.startswith("KP "):
                     self.handle_key_press(line)
-                elif line != "" and self.busy():
-                    self.str_buffer.append(line)
+                elif line != "" and self._awaiting_response:
+                    self.response_buffer.append(line)
                 elif line.startswith("PING "):
                     logger.warning("Unhandled data received '%s'", line)
                 elif line != "":
@@ -146,18 +159,6 @@ class HomeduinoProtocol(asyncio.Protocol):
         if not self.transport:
             raise DisconnectedError("Homeduino is not connected")
 
-        if not ignore_ready and not self.ready:
-            logger.error("Not ready")
-            raise NotReadyError("Homeduino is not ready")
-
-        while self.busy():
-            if (datetime.now() - self._tx_busy_since).total_seconds() > _BUSY_TIMEOUT:
-                logger.error("Too busy to send %s", packet)
-                raise TooBusyError("Homeduino is too busy to send a command")
-            logger.debug("Busy")
-            await asyncio.sleep(0.01)
-        self._tx_busy_since = datetime.now()
-
         is_rf_send = packet.startswith("RF send ")
         if is_rf_send and self._last_rf_send is not None:
             # Allow some time between rf send commands to prevent flooding
@@ -173,21 +174,23 @@ class HomeduinoProtocol(asyncio.Protocol):
             # type ignore: transport from create_connection is documented to be
             # implementation specific bidirectional, even though typed as
             # BaseTransport
+            self._awaiting_response = True
             self.transport.write(data.encode())  # type: ignore
 
             # Wait for response
-            while len(self.str_buffer) == 0:
-                if (
-                    datetime.now() - self._tx_busy_since
-                ).total_seconds() > _RESPONSE_TIMEOUT:
+            timeout = time.time() + _RESPONSE_TIMEOUT
+            while len(self.response_buffer) == 0:
+                if time.time() > timeout:
                     logger.error("Timeout while waiting for command response")
                     raise ResponseTimeoutError(
                         "Timeout while waiting for command response"
                     )
                 logger.debug("Waiting for command response")
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0.1)
 
-            response = self.str_buffer.pop()
+            self._awaiting_response = False
+
+            response = self.response_buffer.pop()
             logger.debug("Command response received: %s", response)
             return response.strip()
         finally:
@@ -195,17 +198,12 @@ class HomeduinoProtocol(asyncio.Protocol):
                 # Set last RF send timestamp
                 self._last_rf_send = datetime.now()
 
-            self._tx_busy_since = None
-
         return None
-
-    def busy(self):
-        return self._tx_busy_since is not None
 
     def connection_lost(self, exc: Optional[Exception]) -> None:
         logger.info("Port closed")
         if exc:
-            logger.exception("Disconnected due to exception")
+            logger.error("Disconnected due to exception: %s", exc)
         else:
             logger.info("Disconnected because of close/abort")
 
@@ -215,6 +213,9 @@ class HomeduinoProtocol(asyncio.Protocol):
 
 class Homeduino:
     protocol: HomeduinoProtocol = None
+
+    _ping_task = None
+    _loop = None
 
     def __init__(
         self,
@@ -235,12 +236,17 @@ class Homeduino:
         self.dht_pin = dht_pin
 
         self.rf_receive_callbacks = []
+        self._send_lock = asyncio.Lock()
 
-    async def connect(self, loop=None) -> bool:
-        if loop is None:
-            loop = asyncio.get_event_loop()
+    def busy(self):
+        return self._send_lock.locked()
 
+    async def _connect(self) -> bool:
         if not self.connected():
+            if self._loop is None:
+                self._loop = asyncio.get_event_loop()
+
+            logger.info("Connecting to %s", self.serial_port)
             try:
                 protocol_factory = partial(HomeduinoProtocol)
 
@@ -248,7 +254,7 @@ class Homeduino:
                     _transport,
                     self.protocol,
                 ) = await serial_asyncio.create_serial_connection(
-                    loop,
+                    self._loop,
                     protocol_factory,
                     self.serial_port,
                     baudrate=self.baud_rate,
@@ -262,7 +268,7 @@ class Homeduino:
                     if (datetime.now() - start_time).total_seconds() > _READY_TIMEOUT:
                         break
                     logger.debug("Waiting for Homeduino to become ready")
-                    await asyncio.sleep(0.01)
+                    await asyncio.sleep(0.1)
 
                 if not self.protocol.ready:
                     logger.warning(
@@ -286,16 +292,31 @@ class Homeduino:
 
         return False
 
+    async def connect(self, loop=None, ping_interval=_PING_INTERVAL) -> bool:
+        self._loop = loop
+
+        if not self.connected() and await self._connect():
+            if ping_interval > 0:
+                self._ping_task = asyncio.create_task(
+                    self._ping_coroutine(ping_interval)
+                )
+                _add_background_task(self._ping_task)
+
+            return True
+
+        return False
+
     def connected(self) -> bool:
         if self.protocol is None or self.protocol.transport is None:
             return False
 
         return True
 
-    async def disconnect(self) -> bool:
-        if self.connected():
+    async def _disconnect(self) -> bool:
+        if self.protocol is not None:
             logger.debug("Disconnecting Homeduino")
-            self.protocol.transport.close()
+            if self.protocol.transport is not None:
+                self.protocol.transport.close()
 
             start_time = datetime.now()
             while self.protocol.ready:
@@ -313,6 +334,14 @@ class Homeduino:
 
         return False
 
+    async def disconnect(self) -> bool:
+        await self._cancel_ping()
+        return await self._disconnect()
+
+    async def _reconnect(self) -> bool:
+        await self._disconnect()
+        return await self._connect()
+
     async def _ping(self, ignore_ready: bool = False) -> bool:
         logger.debug("Pinging Homeduino")
         message = f"PING {time.time()}"
@@ -328,7 +357,7 @@ class Homeduino:
         if not self.connected():
             raise DisconnectedError("Homeduino is not connected")
 
-        if self.protocol.busy():
+        if self.busy():
             return True
 
         return await self._ping()
@@ -358,8 +387,9 @@ class Homeduino:
 
             packet += rf_protocol.encode(**values)
 
-            response = await self.protocol.send(packet)
-            return response == "ACK"
+            with self._send_lock:
+                response = await self.protocol.send(packet)
+                return response == "ACK"
 
         return False
 
@@ -367,7 +397,8 @@ class Homeduino:
         if not self.connected():
             raise DisconnectedError("Homeduino is not connected")
 
-        return await self.protocol.send(command)
+        with self._send_lock:
+            return await self.protocol.send(command)
 
     @staticmethod
     def get_protocols() -> [str]:
@@ -381,3 +412,52 @@ class Homeduino:
 
         protocol_names = [protocol.name for protocol in controller.get_all_protocols()]
         return sorted(protocol_names, key=alphanum_key)
+
+    async def _cancel_ping(self) -> bool:
+        if self._ping_task is not None and not (
+            self._ping_task.done() or self._ping_task.cancelled()
+        ):
+            self._ping_task.cancel()
+            try:
+                await self._ping_task
+            except asyncio.CancelledError:
+                logger.debug("Ping task was cancelled")
+                self._ping_task = None
+
+        if self._ping_task is not None:
+            logger.error("Failed to cancel ping task")
+            logger.debug("Ping task: %s", self._ping_task)
+            return False
+
+        return True
+
+    async def _ping_coroutine(self, ping_interval: int):
+        """
+        To test the connection for availability a ping message can be sent
+        30 seconds if no other messages where sent during the last 30 seconds.
+        """
+        failed_pings = 0
+        while True:
+            logger.debug("_ping_coroutine")
+            try:
+                if not self.connected():
+                    await self._reconnect()
+
+                if self.connected():
+                    await self.ping()
+                    failed_pings = 0
+
+                failed_pings += 1
+                await asyncio.sleep(ping_interval)
+            except ResponseTimeoutError:
+                failed_pings += 1
+                if failed_pings > _ALLOWED_FAILED_PINGS:
+                    logger.error("Unable to ping Homeduino")
+            except asyncio.CancelledError:
+                logger.debug("Ping coroutine was canceled")
+                break
+            except Exception:
+                logger.exception()
+
+        self._ping_task = None
+        logger.debug("Ping coroutine stopped")
