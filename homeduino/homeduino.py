@@ -167,7 +167,9 @@ class HomeduinoProtocol(asyncio.Protocol):
         is_rf_send = packet.startswith("RF send ")
         if is_rf_send and self._last_rf_send is not None:
             # Allow some time between rf send commands to prevent flooding
-            while (datetime.now() - self._last_rf_send).total_seconds() <= _RF_SEND_DELAY:
+            while (
+                datetime.now() - self._last_rf_send
+            ).total_seconds() <= _RF_SEND_DELAY:
                 logger.debug("RF send delay")
                 await asyncio.sleep(0.01)
 
