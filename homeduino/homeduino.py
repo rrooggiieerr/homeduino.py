@@ -63,15 +63,9 @@ class HomeduinoProtocol(asyncio.Protocol):
 
     def __init__(
         self,
-        loop: Optional[asyncio.AbstractEventLoop] = None,
         **_kwargs: Any,
     ):
         """Initialize class."""
-        if loop:
-            self.loop = loop
-        else:
-            self.loop = asyncio.get_event_loop()
-
         self.rf_receive_callbacks = []
         self.str_buffer = deque()
 
@@ -250,7 +244,7 @@ class Homeduino:
     async def connect(self) -> bool:
         if not self.connected():
             try:
-                protocol_factory = partial(HomeduinoProtocol, loop=self.loop)
+                protocol_factory = partial(HomeduinoProtocol)
 
                 (
                     _transport,
