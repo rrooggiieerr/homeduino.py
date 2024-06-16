@@ -110,6 +110,8 @@ class HomeduinoProtocol(asyncio.Protocol):
                     self.handle_key_press(line)
                 elif line != "" and self.busy():
                     self.str_buffer.append(line)
+                elif line.startswith("PING "):
+                    logger.warning("Unhandled data received '%s'", line)
                 elif line != "":
                     logger.error("Unhandled data received '%s'", line)
 
@@ -269,7 +271,7 @@ class Homeduino:
                     await asyncio.sleep(0.01)
 
                 if not self.protocol.ready:
-                    logger.error(
+                    logger.warning(
                         "Timeout while waiting for Homeduino to become ready, trying to ping instead"
                     )
                     if await self._ping(True):
