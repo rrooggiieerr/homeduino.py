@@ -153,7 +153,7 @@ class HomeduinoProtocol(asyncio.Protocol):
         logger.debug(line)
         # Ignoring key presses for now
 
-    async def send(self, packet: str, ignore_ready: bool = False) -> str:
+    async def send(self, packet: str) -> str:
         """Encode and put packet string onto write buffer."""
 
         if not self.transport:
@@ -342,10 +342,10 @@ class Homeduino:
         await self._disconnect()
         return await self._connect()
 
-    async def _ping(self, ignore_ready: bool = False) -> bool:
+    async def _ping(self) -> bool:
         logger.debug("Pinging Homeduino")
         message = f"PING {time.time()}"
-        response = await self.protocol.send(message, ignore_ready)
+        response = await self.protocol.send(message)
         if response == message:
             logger.debug("Pinging Homeduino successful")
             return True
