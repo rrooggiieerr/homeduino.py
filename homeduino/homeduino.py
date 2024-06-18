@@ -8,7 +8,6 @@ from asyncio.transports import BaseTransport
 from collections import deque
 from datetime import datetime
 from functools import partial
-from threading import Lock
 from typing import Any, Final, Optional
 
 import serial_asyncio_fast as serial_asyncio
@@ -82,6 +81,10 @@ class HomeduinoProtocol(asyncio.Protocol):
         """Initialize class."""
         self.rf_receive_callbacks = []
         self.response_buffer = deque()
+        self._send_lock = asyncio.Lock()
+
+    def busy(self):
+        return self._send_lock.locked()
 
     async def set_receive_interrupt(self, receive_interrupt: int) -> bool:
         if receive_interrupt is not None:
@@ -176,21 +179,22 @@ class HomeduinoProtocol(asyncio.Protocol):
             # type ignore: transport from create_connection is documented to be
             # implementation specific bidirectional, even though typed as
             # BaseTransport
-            self._awaiting_response = True
-            self.transport.write(data.encode())  # type: ignore
+            async with self._send_lock:
+                self._awaiting_response = True
+                self.transport.write(data.encode())  # type: ignore
 
-            # Wait for response
-            timeout = time.time() + _RESPONSE_TIMEOUT
-            while len(self.response_buffer) == 0:
-                if time.time() > timeout:
-                    logger.error("Timeout while waiting for command response")
-                    raise ResponseTimeoutError(
-                        "Timeout while waiting for command response"
-                    )
-                logger.debug("Waiting for command response")
-                await asyncio.sleep(0.1)
+                timeout = time.time() + _RESPONSE_TIMEOUT
+                while len(self.response_buffer) == 0:
+                    logger.debug("%i > %i", time.time(), timeout)
+                    if time.time() > timeout:
+                        logger.error("Timeout while waiting for command response")
+                        raise ResponseTimeoutError(
+                            "Timeout while waiting for command response"
+                        )
+                    logger.debug("Waiting for command response")
+                    await asyncio.sleep(0.1)
 
-            self._awaiting_response = False
+                self._awaiting_response = False
 
             response = self.response_buffer.pop()
             logger.debug("Command response received: %s", response)
@@ -238,10 +242,6 @@ class Homeduino:
         self.dht_pin = dht_pin
 
         self.rf_receive_callbacks = []
-        self._send_lock = Lock()
-
-    def busy(self):
-        return self._send_lock.locked()
 
     async def _connect(self) -> bool:
         if not self.connected():
@@ -348,11 +348,10 @@ class Homeduino:
         logger.debug("Pinging Homeduino")
         message = f"PING {time.time()}"
 
-        with self._send_lock:
-            response = await self.protocol.send(message)
-            if response == message:
-                logger.debug("Pinging Homeduino successful")
-                return True
+        response = await self.protocol.send(message)
+        if response == message:
+            logger.debug("Pinging Homeduino successful")
+            return True
 
         logger.error("Pinging Homeduino failed")
         return False
@@ -361,7 +360,7 @@ class Homeduino:
         if not self.connected():
             raise DisconnectedError("Homeduino is not connected")
 
-        if self.busy():
+        if self.protocol.busy():
             return True
 
         return await self._ping()
@@ -391,9 +390,8 @@ class Homeduino:
 
             packet += rf_protocol.encode(**values)
 
-            with self._send_lock:
-                response = await self.protocol.send(packet)
-                return response == "ACK"
+            response = await self.protocol.send(packet)
+            return response == "ACK"
 
         return False
 
@@ -401,8 +399,7 @@ class Homeduino:
         if not self.connected():
             raise DisconnectedError("Homeduino is not connected")
 
-        with self._send_lock:
-            return await self.protocol.send(command)
+        return await self.protocol.send(command)
 
     @staticmethod
     def get_protocols() -> [str]:
