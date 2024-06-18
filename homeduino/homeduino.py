@@ -8,6 +8,7 @@ from asyncio.transports import BaseTransport
 from collections import deque
 from datetime import datetime
 from functools import partial
+from threading import Lock
 from typing import Any, Final, Optional
 
 import serial_asyncio_fast as serial_asyncio
@@ -237,7 +238,7 @@ class Homeduino:
         self.dht_pin = dht_pin
 
         self.rf_receive_callbacks = []
-        self._send_lock = asyncio.Lock()
+        self._send_lock = Lock()
 
     def busy(self):
         return self._send_lock.locked()
@@ -346,10 +347,12 @@ class Homeduino:
     async def _ping(self) -> bool:
         logger.debug("Pinging Homeduino")
         message = f"PING {time.time()}"
-        response = await self.protocol.send(message)
-        if response == message:
-            logger.debug("Pinging Homeduino successful")
-            return True
+
+        with self._send_lock:
+            response = await self.protocol.send(message)
+            if response == message:
+                logger.debug("Pinging Homeduino successful")
+                return True
 
         logger.error("Pinging Homeduino failed")
         return False
