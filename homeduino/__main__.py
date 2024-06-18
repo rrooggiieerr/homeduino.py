@@ -4,6 +4,8 @@ Created on 23 Nov 2022
 @author: Rogier van Staveren
 """
 
+# pylint: disable=missing-function-docstring
+
 import argparse
 import asyncio
 import json

@@ -1,10 +1,14 @@
+# pylint: disable=missing-module-docstring
+# pylint: disable=missing-class-docstring
+# pylint: disable=missing-function-docstring
+
 import logging
 import unittest
 
+from homeduino import Homeduino
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
-
-from homeduino import Homeduino
 
 
 class TestHomeduino(unittest.IsolatedAsyncioTestCase):

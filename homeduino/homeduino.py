@@ -129,7 +129,8 @@ class HomeduinoProtocol(asyncio.Protocol):
     def handle_rf_receive(self, line: str) -> None:
         logger.debug(line)
 
-        # The first 8 numbers are the pulse lengths and the last string of numbers is the pulse sequence
+        # The first 8 numbers are the pulse lengths and the last string of numbers is the pulse
+        # sequence.
         parts = line.split(" ")
 
         pulse_lengths = [int(i) for i in parts[2:10]]
@@ -456,8 +457,6 @@ class Homeduino:
             except asyncio.CancelledError:
                 logger.debug("Ping coroutine was canceled")
                 break
-            except Exception:
-                logger.exception()
 
         self._ping_task = None
         logger.debug("Ping coroutine stopped")
