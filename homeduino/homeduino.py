@@ -86,9 +86,9 @@ class HomeduinoProtocol(asyncio.Protocol):
     def busy(self):
         return self._send_lock.locked()
 
-    async def set_receive_interrupt(self, receive_interrupt: int) -> bool:
-        if receive_interrupt is not None:
-            response = await self.send(f"RF receive {receive_interrupt}")
+    async def set_rf_receive_interrupt(self, rf_receive_interrupt: int) -> bool:
+        if rf_receive_interrupt is not None:
+            response = await self.send(f"RF receive {rf_receive_interrupt}")
             return response == "ACK"
         return False
 
@@ -217,6 +217,8 @@ class HomeduinoProtocol(asyncio.Protocol):
 
 
 class Homeduino:
+    rf_receive_interrupt: int | None = None
+
     protocol: HomeduinoProtocol = None
 
     _ping_task = None
@@ -226,9 +228,8 @@ class Homeduino:
         self,
         serial_port: str,
         baud_rate: int = DEFAULT_BAUD_RATE,
-        receive_pin: int = DEFAULT_RECEIVE_PIN,
-        send_pin: int = DEFAULT_SEND_PIN,
-        dht_pin: int = None,
+        rf_receive_pin: int | None = DEFAULT_RECEIVE_PIN,
+        rf_send_pin: int | None = DEFAULT_SEND_PIN,
     ):
         # Test if the device exists
         if not os.path.exists(serial_port):
@@ -236,9 +237,9 @@ class Homeduino:
 
         self.serial_port = serial_port
         self.baud_rate = baud_rate
-        self.receive_interrupt = receive_pin - 2
-        self.send_pin = send_pin
-        self.dht_pin = dht_pin
+        if rf_receive_pin is not None:
+            self.rf_receive_interrupt = rf_receive_pin - 2
+        self.rf_send_pin = rf_send_pin
 
         self.rf_receive_callbacks = []
 
@@ -282,7 +283,10 @@ class Homeduino:
                             "Timeout while waiting for Homeduino to become ready"
                         )
 
-                await self.protocol.set_receive_interrupt(self.receive_interrupt)
+                if self.rf_receive_interrupt is not None:
+                    await self.protocol.set_rf_receive_interrupt(
+                        self.rf_receive_interrupt
+                    )
 
                 for rf_receive_callback in self.rf_receive_callbacks:
                     self.protocol.add_rf_receive_callback(rf_receive_callback)
@@ -373,11 +377,11 @@ class Homeduino:
         if not self.connected():
             raise DisconnectedError("Homeduino is not connected")
 
-        if self.send_pin is not None:
+        if self.rf_send_pin is not None:
             rf_protocol = getattr(sys.modules[controller.__name__], rf_protocol)
             logger.debug(rf_protocol)
 
-            packet = f"RF send {self.send_pin} 3 "
+            packet = f"RF send {self.rf_send_pin} 3 "
 
             for pulse_length in rf_protocol.pulse_lengths:
                 packet += f"{pulse_length} "
