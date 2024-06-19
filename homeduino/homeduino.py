@@ -185,7 +185,6 @@ class HomeduinoProtocol(asyncio.Protocol):
 
                 timeout = time.time() + _RESPONSE_TIMEOUT
                 while len(self.response_buffer) == 0:
-                    logger.debug("%i > %i", time.time(), timeout)
                     if time.time() > timeout:
                         logger.error("Timeout while waiting for command response")
                         raise ResponseTimeoutError(
@@ -439,7 +438,6 @@ class Homeduino:
         """
         failed_pings = 0
         while True:
-            logger.debug("_ping_coroutine")
             try:
                 if not self.connected():
                     await self._reconnect()
