@@ -45,7 +45,7 @@ class HomeduinoError(Exception):
     """Generic Homeduino error."""
 
 
-class ResponseTimeoutError(HomeduinoError):
+class HomeduinoResponseTimeoutError(HomeduinoError):
     """
     Response timeout error.
 
@@ -53,15 +53,15 @@ class ResponseTimeoutError(HomeduinoError):
     """
 
 
-class DisconnectedError(HomeduinoError):
+class HomeduinoDisconnectedError(HomeduinoError):
     """Homeduino Disconnected error."""
 
 
-class NotReadyError(HomeduinoError):
+class HomeduinoNotReadyError(HomeduinoError):
     """Homeduino not ready error."""
 
 
-class TooBusyError(HomeduinoError):
+class HomeduinoTooBusyError(HomeduinoError):
     """Homeduino Disconnected error."""
 
 
@@ -162,7 +162,7 @@ class HomeduinoProtocol(asyncio.Protocol):
         """Encode and put packet string onto write buffer."""
 
         if not self.transport:
-            raise DisconnectedError("Homeduino is not connected")
+            raise HomeduinoDisconnectedError("Homeduino is not connected")
 
         is_rf_send = packet.startswith("RF send ")
         if is_rf_send and self._last_rf_send is not None:
@@ -187,7 +187,7 @@ class HomeduinoProtocol(asyncio.Protocol):
                 while len(self.response_buffer) == 0:
                     if time.time() > timeout:
                         logger.error("Timeout while waiting for command response")
-                        raise ResponseTimeoutError(
+                        raise HomeduinoResponseTimeoutError(
                             "Timeout while waiting for command response"
                         )
                     logger.debug("Waiting for command response")
@@ -279,7 +279,7 @@ class Homeduino:
                     if await self._ping(True):
                         self.protocol.handle_ready()
                     else:
-                        raise ResponseTimeoutError(
+                        raise HomeduinoResponseTimeoutError(
                             "Timeout while waiting for Homeduino to become ready"
                         )
 
@@ -327,7 +327,7 @@ class Homeduino:
             while self.protocol.ready:
                 if (datetime.now() - start_time).total_seconds() > _READY_TIMEOUT:
                     logger.error("Timeout while waiting for Homeduino to disconnect")
-                    raise ResponseTimeoutError(
+                    raise HomeduinoResponseTimeoutError(
                         "Timeout while waiting for Homeduino to disconnect"
                     )
                 logger.debug("Waiting for Homeduino to disconnect")
@@ -361,7 +361,7 @@ class Homeduino:
 
     async def ping(self) -> bool:
         if not self.connected():
-            raise DisconnectedError("Homeduino is not connected")
+            raise HomeduinoDisconnectedError("Homeduino is not connected")
 
         if self.protocol.busy():
             return True
@@ -369,13 +369,13 @@ class Homeduino:
         return await self._ping()
 
     def add_rf_receive_callback(self, rf_receive_callback) -> None:
-        self.rf_receive_callbacks.append(rf_receive_callback)
+        self._rf_receive_callbacks.append(rf_receive_callback)
         if self.connected():
             self.protocol.add_rf_receive_callback(rf_receive_callback)
 
     async def rf_send(self, rf_protocol: str, values) -> bool:
         if not self.connected():
-            raise DisconnectedError("Homeduino is not connected")
+            raise HomeduinoDisconnectedError("Homeduino is not connected")
 
         if self.rf_send_pin is not None:
             rf_protocol = getattr(sys.modules[controller.__name__], rf_protocol)
@@ -400,7 +400,7 @@ class Homeduino:
 
     async def send(self, command) -> str:
         if not self.connected():
-            raise DisconnectedError("Homeduino is not connected")
+            raise HomeduinoDisconnectedError("Homeduino is not connected")
 
         return await self.protocol.send(command)
 
@@ -452,7 +452,7 @@ class Homeduino:
 
                 failed_pings += 1
                 await asyncio.sleep(ping_interval)
-            except ResponseTimeoutError:
+            except HomeduinoResponseTimeoutError:
                 failed_pings += 1
                 if failed_pings > _ALLOWED_FAILED_PINGS:
                     logger.error("Unable to ping Homeduino")
