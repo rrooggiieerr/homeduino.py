@@ -13,6 +13,7 @@ from .homeduino import (
     HomeduinoDisconnectedError,
     HomeduinoError,
     HomeduinoNotReadyError,
+    HomeduinoPinMode,
     HomeduinoResponseTimeoutError,
     HomeduinoTooBusyError,
 )

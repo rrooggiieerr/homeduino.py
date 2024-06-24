@@ -6,7 +6,8 @@ import sys
 import time
 from asyncio.transports import BaseTransport
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
+from enum import IntEnum
 from functools import partial
 from typing import Any, Final, Optional
 
@@ -70,6 +71,7 @@ class HomeduinoProtocol(asyncio.Protocol):
 
     ready = False
     _last_rf_send = None
+    last_message_received = None
 
     _str_buffer = ""
     _awaiting_response = False
@@ -79,7 +81,7 @@ class HomeduinoProtocol(asyncio.Protocol):
         **_kwargs: Any,
     ):
         """Initialize class."""
-        self.rf_receive_callbacks = []
+        self._rf_receive_callbacks = []
         self.response_buffer = deque()
         self._send_lock = asyncio.Lock()
 
@@ -94,7 +96,7 @@ class HomeduinoProtocol(asyncio.Protocol):
 
     def add_rf_receive_callback(self, rf_receive_callback) -> None:
         if rf_receive_callback is not None:
-            self.rf_receive_callbacks.append(rf_receive_callback)
+            self._rf_receive_callbacks.append(rf_receive_callback)
 
     def connection_made(self, transport: BaseTransport) -> None:
         self.transport = transport
@@ -125,6 +127,7 @@ class HomeduinoProtocol(asyncio.Protocol):
                     logger.warning("Unhandled data received '%s'", line)
                 elif line != "":
                     logger.error("Unhandled data received '%s'", line)
+                self.last_message_received = datetime.now()
 
     def handle_ready(self) -> None:
         self.ready = True
@@ -146,12 +149,12 @@ class HomeduinoProtocol(asyncio.Protocol):
 
         if len(decoded) == 0:
             logger.warning("No protocol for %s %s", pulse_lengths, pulse_sequence)
-        elif len(self.rf_receive_callbacks) == 0:
+        elif len(self._rf_receive_callbacks) == 0:
             logger.debug("No receive callbacks configured")
         else:
             for protocol in decoded:
                 logger.debug("Forwarding RF protocol to receive callbacks")
-                for rf_receive_callback in self.rf_receive_callbacks:
+                for rf_receive_callback in self._rf_receive_callbacks:
                     rf_receive_callback(protocol)
 
     def handle_key_press(self, line: str) -> None:
@@ -175,12 +178,12 @@ class HomeduinoProtocol(asyncio.Protocol):
 
         try:
             data = packet + "\n"
-            logger.debug("Writing data: %s", repr(data))
             # type ignore: transport from create_connection is documented to be
             # implementation specific bidirectional, even though typed as
             # BaseTransport
             async with self._send_lock:
                 self._awaiting_response = True
+                logger.debug("Writing data: %s", repr(data))
                 self.transport.write(data.encode())  # type: ignore
 
                 timeout = time.time() + _RESPONSE_TIMEOUT
@@ -216,6 +219,12 @@ class HomeduinoProtocol(asyncio.Protocol):
         self.ready = False
 
 
+class HomeduinoPinMode(IntEnum):
+    INPUT = 0x00
+    OUTPUT = 0x01
+    INPUT_PULLUP = 0x02
+
+
 class Homeduino:
     rf_receive_interrupt: int | None = None
 
@@ -241,7 +250,9 @@ class Homeduino:
             self.rf_receive_interrupt = rf_receive_pin - 2
         self.rf_send_pin = rf_send_pin
 
-        self.rf_receive_callbacks = []
+        self._rf_receive_callbacks = []
+        self._digital_read_callbacks = {}
+        self._analog_read_callbacks = {}
 
     async def _connect(self) -> bool:
         if not self.connected():
@@ -276,7 +287,7 @@ class Homeduino:
                     logger.warning(
                         "Timeout while waiting for Homeduino to become ready, trying to ping instead"
                     )
-                    if await self._ping(True):
+                    if await self._ping():
                         self.protocol.handle_ready()
                     else:
                         raise HomeduinoResponseTimeoutError(
@@ -288,7 +299,7 @@ class Homeduino:
                         self.rf_receive_interrupt
                     )
 
-                for rf_receive_callback in self.rf_receive_callbacks:
+                for rf_receive_callback in self._rf_receive_callbacks:
                     self.protocol.add_rf_receive_callback(rf_receive_callback)
 
                 return True
@@ -303,7 +314,7 @@ class Homeduino:
         if not self.connected() and await self._connect():
             if ping_interval > 0:
                 self._ping_task = asyncio.create_task(
-                    self._ping_coroutine(ping_interval)
+                    self._ping_coroutine(timedelta(seconds=ping_interval))
                 )
                 _add_background_task(self._ping_task)
 
@@ -373,6 +384,16 @@ class Homeduino:
         if self.connected():
             self.protocol.add_rf_receive_callback(rf_receive_callback)
 
+    async def add_digital_read_callback(
+        self, digital_io: int, digital_read_callback
+    ) -> None:
+        if self.connected():
+            await self.pin_mode(digital_io, HomeduinoPinMode.INPUT_PULLUP)
+        self._digital_read_callbacks[digital_io] = digital_read_callback
+
+    def add_analog_read_callback(self, analog_input: int, analog_read_callback) -> None:
+        self._analog_read_callbacks[analog_input] = analog_read_callback
+
     async def rf_send(self, rf_protocol: str, values) -> bool:
         if not self.connected():
             raise HomeduinoDisconnectedError("Homeduino is not connected")
@@ -403,6 +424,32 @@ class Homeduino:
             raise HomeduinoDisconnectedError("Homeduino is not connected")
 
         return await self.protocol.send(command)
+
+    async def pin_mode(self, digital_io: int, mode: HomeduinoPinMode):
+        response = await self.send(f"PM {digital_io} {mode}")
+        success = response == "ACK"
+
+        return success
+
+    async def digital_write(self, digital_io: int, value: bool):
+        response = await self.send(f"DW {digital_io} {1 if value else 0}")
+        return response == "ACK"
+
+    async def digital_read(self, digital_io: int) -> bool:
+        response = await self.send(f"DR {digital_io}")
+        return response == "ACK 1"
+
+    async def analog_write(self, digital_io: int, value: int):
+        if digital_io not in (3, 5, 6, 9, 10, 11):
+            return False
+
+        response = await self.send(f"DW {digital_io} {value}")
+        return response == "ACK"
+
+    async def analog_read(self, analog_input: int) -> bool:
+        response = await self.send(f"AR {analog_input}")
+        response = response.split(" ")[1]
+        return int(response)
 
     @staticmethod
     def get_protocols() -> [str]:
@@ -435,7 +482,7 @@ class Homeduino:
 
         return True
 
-    async def _ping_coroutine(self, ping_interval: int):
+    async def _ping_coroutine(self, ping_interval: timedelta):
         """
         To test the connection for availability a ping message can be sent
         30 seconds if no other messages where sent during the last 30 seconds.
@@ -443,15 +490,39 @@ class Homeduino:
         failed_pings = 0
         while True:
             try:
+                logger.debug("_ping_coroutine")
                 if not self.connected():
                     await self._reconnect()
 
                 if self.connected():
-                    await self.ping()
-                    failed_pings = 0
+                    for (
+                        digital_io,
+                        digital_read_callback,
+                    ) in self._digital_read_callbacks.items():
+                        if not self.protocol.busy():
+                            value = await self.digital_read(digital_io)
+                            logger.info("Digital %i: %s", digital_io, value)
+                            digital_read_callback(value)
 
-                failed_pings += 1
-                await asyncio.sleep(ping_interval)
+                    for (
+                        analog_input,
+                        analog_read_callback,
+                    ) in self._analog_read_callbacks.items():
+                        if not self.protocol.busy():
+                            value = await self.analog_read(analog_input)
+                            logger.info("Analog %i: %s", analog_input, value)
+                            analog_read_callback(value)
+
+                    if (
+                        datetime.now()
+                        > self.protocol.last_message_received + ping_interval
+                    ):
+                        if await self.ping():
+                            failed_pings = 0
+                        else:
+                            failed_pings += 1
+
+                await asyncio.sleep(0.1)
             except HomeduinoResponseTimeoutError:
                 failed_pings += 1
                 if failed_pings > _ALLOWED_FAILED_PINGS:
@@ -459,6 +530,8 @@ class Homeduino:
             except asyncio.CancelledError:
                 logger.debug("Ping coroutine was canceled")
                 break
+            except Exception:
+                logger.exception()
 
         self._ping_task = None
         logger.debug("Ping coroutine stopped")
