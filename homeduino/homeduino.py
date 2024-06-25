@@ -194,7 +194,7 @@ class HomeduinoProtocol(asyncio.Protocol):
                             "Timeout while waiting for command response"
                         )
                     logger.debug("Waiting for command response")
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.01)
 
                 self._awaiting_response = False
 
@@ -488,6 +488,9 @@ class Homeduino:
         30 seconds if no other messages where sent during the last 30 seconds.
         """
         failed_pings = 0
+        digital_io_values = [None] * 14
+        analog_input_values = [None] * 8
+        sleep_time = 0.1
         while True:
             try:
                 logger.debug("_ping_coroutine")
@@ -498,20 +501,28 @@ class Homeduino:
                     for (
                         digital_io,
                         digital_read_callback,
-                    ) in self._digital_read_callbacks.items():
+                    ) in self._digital_read_callbacks.copy().items():
+                        sleep_time = 0.01
                         if not self.protocol.busy():
                             value = await self.digital_read(digital_io)
-                            logger.info("Digital %i: %s", digital_io, value)
-                            digital_read_callback(value)
+                            previous_value = digital_io_values[digital_io]
+                            if value != previous_value:
+                                logger.debug("Digital %i: %s", digital_io, value)
+                                digital_read_callback(value)
+                                digital_io_values[digital_io] = value
 
                     for (
                         analog_input,
                         analog_read_callback,
-                    ) in self._analog_read_callbacks.items():
+                    ) in self._analog_read_callbacks.copy().items():
+                        sleep_time = 0.01
                         if not self.protocol.busy():
                             value = await self.analog_read(analog_input)
-                            logger.info("Analog %i: %s", analog_input, value)
-                            analog_read_callback(value)
+                            previous_value = analog_input_values[analog_input]
+                            if value != previous_value:
+                                logger.debug("Analog %i: %s", analog_input, value)
+                                analog_read_callback(value)
+                                analog_input_values[analog_input] = value
 
                     if (
                         datetime.now()
@@ -522,7 +533,7 @@ class Homeduino:
                         else:
                             failed_pings += 1
 
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(sleep_time)
             except HomeduinoResponseTimeoutError:
                 failed_pings += 1
                 if failed_pings > _ALLOWED_FAILED_PINGS:
@@ -531,7 +542,7 @@ class Homeduino:
                 logger.debug("Ping coroutine was canceled")
                 break
             except Exception:
-                logger.exception()
+                logger.exception("Unexpected error")
 
         self._ping_task = None
         logger.debug("Ping coroutine stopped")
