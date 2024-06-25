@@ -29,6 +29,7 @@ _BUSY_TIMEOUT = 1
 _RF_SEND_DELAY = 0.2
 _PING_INTERVAL = 5
 _ALLOWED_FAILED_PINGS = 1
+_DHT_READ_DELAY = timedelta(seconds=2)
 
 background_tasks = set()
 
@@ -253,6 +254,7 @@ class Homeduino:
         self._rf_receive_callbacks = []
         self._digital_read_callbacks = {}
         self._analog_read_callbacks = {}
+        self._dht_read_callbacks = {}
 
     async def _connect(self) -> bool:
         if not self.connected():
@@ -400,6 +402,16 @@ class Homeduino:
         else:
             self._analog_read_callbacks[analog_input] = [analog_read_callback]
 
+    async def add_dht_read_callback(
+        self, dht_type: int, digital_io: int, dht_read_callback
+    ):
+        if self.connected():
+            await self.pin_mode(digital_io, HomeduinoPinMode.INPUT)
+        if digital_io in self._dht_read_callbacks:
+            self._dht_read_callbacks[digital_io][1].append(dht_read_callback)
+        else:
+            self._dht_read_callbacks[digital_io] = [dht_type, [dht_read_callback]]
+
     async def rf_send(self, rf_protocol: str, values) -> bool:
         if not self.connected():
             raise HomeduinoDisconnectedError("Homeduino is not connected")
@@ -452,10 +464,17 @@ class Homeduino:
         response = await self.send(f"DW {digital_io} {value}")
         return response == "ACK"
 
-    async def analog_read(self, analog_input: int) -> bool:
+    async def analog_read(self, analog_input: int) -> int:
         response = await self.send(f"AR {analog_input}")
         response = response.split(" ")[1]
         return int(response)
+
+    async def dht_read(self, dht_type: int, digital_io: int) -> int:
+        response = await self.send(f"DHT {dht_type} {digital_io}")
+        response = response.split(" ")
+        temperature = float(response[1])
+        humidity = float(response[2])
+        return (temperature, humidity)
 
     @staticmethod
     def get_protocols() -> [str]:
@@ -496,6 +515,8 @@ class Homeduino:
         failed_pings = 0
         digital_io_values = [None] * 14
         analog_input_values = [None] * 8
+        dht_values = [(None, None)] * 14
+        last_dht_read = None
         sleep_time = 0.1
         while True:
             try:
@@ -530,6 +551,36 @@ class Homeduino:
                                 for analog_read_callback in analog_read_callbacks:
                                     analog_read_callback(value)
                                 analog_input_values[analog_input] = value
+
+                    if (
+                        last_dht_read is None
+                        or datetime.now() > last_dht_read + _DHT_READ_DELAY
+                    ):
+                        for (
+                            digital_io,
+                            (dht_type, dht_read_callbacks),
+                        ) in self._dht_read_callbacks.copy().items():
+                            if not self.protocol.busy():
+                                (temperature, humidity) = await self.dht_read(
+                                    dht_type, digital_io
+                                )
+                                (previous_temperature, previous_humidity) = dht_values[
+                                    digital_io
+                                ]
+                                if (
+                                    temperature != previous_temperature
+                                    or humidity != previous_humidity
+                                ):
+                                    logger.info(
+                                        "DHT %i: %s°, %s%%",
+                                        digital_io,
+                                        temperature,
+                                        humidity,
+                                    )
+                                    for dht_read_callback in dht_read_callbacks:
+                                        dht_read_callback(temperature, humidity)
+                                    dht_values[digital_io] = (temperature, humidity)
+                                last_dht_read = datetime.now()
 
                     if (
                         datetime.now()
