@@ -472,9 +472,14 @@ class Homeduino:
     async def dht_read(self, dht_type: int, digital_io: int) -> int:
         response = await self.send(f"DHT {dht_type} {digital_io}")
         response = response.split(" ")
-        temperature = float(response[1])
-        humidity = float(response[2])
-        return (temperature, humidity)
+        try:
+            temperature = float(response[1])
+            humidity = float(response[2])
+            return (temperature, humidity)
+        except ValueError:
+            pass
+
+        return (None, None)
 
     @staticmethod
     def get_protocols() -> [str]:
@@ -567,11 +572,11 @@ class Homeduino:
                                 (previous_temperature, previous_humidity) = dht_values[
                                     digital_io
                                 ]
-                                if (
+                                if temperature is not None and (
                                     temperature != previous_temperature
                                     or humidity != previous_humidity
                                 ):
-                                    logger.info(
+                                    logger.debug(
                                         "DHT %i: %s°, %s%%",
                                         digital_io,
                                         temperature,
