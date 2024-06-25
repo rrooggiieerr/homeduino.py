@@ -389,10 +389,16 @@ class Homeduino:
     ) -> None:
         if self.connected():
             await self.pin_mode(digital_io, HomeduinoPinMode.INPUT_PULLUP)
-        self._digital_read_callbacks[digital_io] = digital_read_callback
+        if digital_io in self._digital_read_callbacks:
+            self._digital_read_callbacks[digital_io].append(digital_read_callback)
+        else:
+            self._digital_read_callbacks[digital_io] = [digital_read_callback]
 
     def add_analog_read_callback(self, analog_input: int, analog_read_callback) -> None:
-        self._analog_read_callbacks[analog_input] = analog_read_callback
+        if analog_input in self._analog_read_callbacks:
+            self._analog_read_callbacks[analog_input].append(analog_read_callback)
+        else:
+            self._analog_read_callbacks[analog_input] = [analog_read_callback]
 
     async def rf_send(self, rf_protocol: str, values) -> bool:
         if not self.connected():
@@ -499,7 +505,7 @@ class Homeduino:
                 if self.connected():
                     for (
                         digital_io,
-                        digital_read_callback,
+                        digital_read_callbacks,
                     ) in self._digital_read_callbacks.copy().items():
                         sleep_time = 0.01
                         if not self.protocol.busy():
@@ -507,12 +513,13 @@ class Homeduino:
                             previous_value = digital_io_values[digital_io]
                             if value != previous_value:
                                 logger.debug("Digital %i: %s", digital_io, value)
-                                digital_read_callback(value)
+                                for digital_read_callback in digital_read_callbacks:
+                                    digital_read_callback(value)
                                 digital_io_values[digital_io] = value
 
                     for (
                         analog_input,
-                        analog_read_callback,
+                        analog_read_callbacks,
                     ) in self._analog_read_callbacks.copy().items():
                         sleep_time = 0.01
                         if not self.protocol.busy():
@@ -520,7 +527,8 @@ class Homeduino:
                             previous_value = analog_input_values[analog_input]
                             if value != previous_value:
                                 logger.debug("Analog %i: %s", analog_input, value)
-                                analog_read_callback(value)
+                                for analog_read_callback in analog_read_callbacks:
+                                    analog_read_callback(value)
                                 analog_input_values[analog_input] = value
 
                     if (
@@ -532,7 +540,6 @@ class Homeduino:
                         else:
                             failed_pings += 1
 
-                await asyncio.sleep(sleep_time)
             except HomeduinoResponseTimeoutError:
                 failed_pings += 1
                 if failed_pings > _ALLOWED_FAILED_PINGS:
@@ -542,6 +549,8 @@ class Homeduino:
                 break
             except Exception:
                 logger.exception("Unexpected error")
+
+            await asyncio.sleep(sleep_time)
 
         self._ping_and_read_task = None
         logger.debug("Ping and read coroutine stopped")
