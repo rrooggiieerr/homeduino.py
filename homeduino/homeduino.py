@@ -230,7 +230,7 @@ class Homeduino:
 
     protocol: HomeduinoProtocol = None
 
-    _ping_task = None
+    _ping_and_read_task = None
     _loop = None
 
     def __init__(
@@ -313,10 +313,10 @@ class Homeduino:
 
         if not self.connected() and await self._connect():
             if ping_interval > 0:
-                self._ping_task = asyncio.create_task(
-                    self._ping_coroutine(timedelta(seconds=ping_interval))
+                self._ping_and_read_task = asyncio.create_task(
+                    self._ping_and_read_coroutine(timedelta(seconds=ping_interval))
                 )
-                _add_background_task(self._ping_task)
+                _add_background_task(self._ping_and_read_task)
 
             return True
 
@@ -351,7 +351,7 @@ class Homeduino:
         return False
 
     async def disconnect(self) -> bool:
-        await self._cancel_ping()
+        await self._cancel_ping_and_read()
         return await self._disconnect()
 
     async def _reconnect(self) -> bool:
@@ -464,28 +464,28 @@ class Homeduino:
         protocol_names = [protocol.name for protocol in controller.get_all_protocols()]
         return sorted(protocol_names, key=alphanum_key)
 
-    async def _cancel_ping(self) -> bool:
-        if self._ping_task is not None and not (
-            self._ping_task.done() or self._ping_task.cancelled()
+    async def _cancel_ping_and_read(self) -> bool:
+        if self._ping_and_read_task is not None and not (
+            self._ping_and_read_task.done() or self._ping_and_read_task.cancelled()
         ):
-            self._ping_task.cancel()
+            self._ping_and_read_task.cancel()
             try:
-                await self._ping_task
+                await self._ping_and_read_task
             except asyncio.CancelledError:
-                logger.debug("Ping task was cancelled")
-                self._ping_task = None
+                logger.debug("Ping and read task was cancelled")
+                self._ping_and_read_task = None
 
-        if self._ping_task is not None:
-            logger.error("Failed to cancel ping task")
-            logger.debug("Ping task: %s", self._ping_task)
+        if self._ping_and_read_task is not None:
+            logger.error("Failed to cancel ping and read task")
+            logger.debug("Ping and read task: %s", self._ping_and_read_task)
             return False
 
         return True
 
-    async def _ping_coroutine(self, ping_interval: timedelta):
+    async def _ping_and_read_coroutine(self, ping_interval: timedelta):
         """
-        To test the connection for availability a ping message can be sent
-        30 seconds if no other messages where sent during the last 30 seconds.
+        To test the connection for availability a ping message can be sent every interval if no
+        other messages where received during the interval.
         """
         failed_pings = 0
         digital_io_values = [None] * 14
@@ -493,7 +493,6 @@ class Homeduino:
         sleep_time = 0.1
         while True:
             try:
-                logger.debug("_ping_coroutine")
                 if not self.connected():
                     await self._reconnect()
 
@@ -539,10 +538,10 @@ class Homeduino:
                 if failed_pings > _ALLOWED_FAILED_PINGS:
                     logger.error("Unable to ping Homeduino")
             except asyncio.CancelledError:
-                logger.debug("Ping coroutine was canceled")
+                logger.debug("Ping and read coroutine was canceled")
                 break
             except Exception:
                 logger.exception("Unexpected error")
 
-        self._ping_task = None
-        logger.debug("Ping coroutine stopped")
+        self._ping_and_read_task = None
+        logger.debug("Ping and read coroutine stopped")
