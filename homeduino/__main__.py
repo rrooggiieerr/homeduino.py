@@ -80,7 +80,7 @@ if __name__ == "__main__":
     try:
         loop = asyncio.new_event_loop()
         homeduino = Homeduino(
-            args.port, receive_pin=args.receive_pin, send_pin=args.send_pin
+            args.port, rf_receive_pin=args.receive_pin, rf_send_pin=args.send_pin
         )
         sys.exit(
             loop.run_until_complete(
