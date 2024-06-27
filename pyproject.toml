@@ -31,7 +31,7 @@ classifiers = [
 ]
 dependencies = [
     "pyserial-asyncio-fast>=0.12",
-    "rfcontrolpy==0.0.8"
+    "rfcontrolpy==0.0.9"
 ]
 
 [project.urls]
