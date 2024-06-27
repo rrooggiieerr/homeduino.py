@@ -30,6 +30,7 @@ You can use the Python Homeduino library directly from the command line to liste
 messages.
 
 `python3 -m homeduino <port> <receive_pin> <send_pin> listen`
+
 `python3 -m homeduino <port> <receive_pin> <send_pin> send <protocol> <values>`
 
 ### Troubleshooting
