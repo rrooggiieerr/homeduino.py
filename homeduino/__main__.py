@@ -23,35 +23,42 @@ def rf_receive_callback(decoded):
     _LOGGER.info("%s %s", decoded["protocol"], json.dumps(decoded["values"]))
 
 
-async def main(
-    homeduino: Homeduino, action: str, protocol: str = None, values: str = None
-):
+async def listen(homeduino_: Homeduino):
     try:
         _LOGGER.info("Connecting to Homeduino")
-        if not await homeduino.connect():
+        if not await homeduino_.connect():
             _LOGGER.error("Failed to connect to Homeduino")
             return 1
 
-        if action == "listen":
-            homeduino.add_rf_receive_callback(rf_receive_callback)
-            while True:
-                await asyncio.sleep(1)
-        elif action == "send":
-            _LOGGER.debug("Protocol: %s", protocol)
-            _LOGGER.debug("Values: %s", values)
-            homeduino.rf_send(protocol, values)
+        homeduino_.add_rf_receive_callback(rf_receive_callback)
+        while True:
+            await asyncio.sleep(1)
 
     except SerialException as e:
         _LOGGER.error("Failed to connect to Homeduino, reason: %s", e)
         sys.exit(1)
-    except KeyboardInterrupt:
-        # Handle keyboard interrupt
-        pass
     finally:
         _LOGGER.info("Disconnecting from Homeduino")
-        await homeduino.disconnect()
+        await homeduino_.disconnect()
 
-    return 0
+
+async def send(homeduino_: Homeduino, protocol: str = None, values: str = None):
+    try:
+        _LOGGER.info("Connecting to Homeduino")
+        if not await homeduino.connect(ping_interval=0):
+            _LOGGER.error("Failed to connect to Homeduino")
+            return 1
+
+        _LOGGER.debug("Protocol: %s", protocol)
+        _LOGGER.debug("Values: %s", values)
+        await homeduino_.rf_send(protocol, values)
+
+    except SerialException as e:
+        _LOGGER.error("Failed to connect to Homeduino, reason: %s", e)
+        sys.exit(1)
+    finally:
+        _LOGGER.info("Disconnecting from Homeduino")
+        await homeduino_.disconnect()
 
 
 if __name__ == "__main__":
@@ -62,9 +69,15 @@ if __name__ == "__main__":
         "receive_pin", nargs="?", type=int, default=DEFAULT_RECEIVE_PIN
     )
     argparser.add_argument("send_pin", nargs="?", type=int, default=DEFAULT_SEND_PIN)
-    argparser.add_argument("action", choices=["listen", "send"])
-    argparser.add_argument("protocol", nargs="?")
-    argparser.add_argument("values", nargs="?")
+
+    subparsers = argparser.add_subparsers()
+
+    listen_parser = subparsers.add_parser("listen")
+
+    send_parser = subparsers.add_parser("send")
+    send_parser.add_argument("protocol", nargs="?")
+    send_parser.add_argument("values", nargs="?")
+
     argparser.add_argument("--debug", dest="debugLogging", action="store_true")
 
     args = argparser.parse_args()
@@ -77,18 +90,21 @@ if __name__ == "__main__":
     else:
         logging.basicConfig(format="%(message)s", level=logging.INFO)
 
+    homeduino = Homeduino(
+        args.port, rf_receive_pin=args.receive_pin, rf_send_pin=args.send_pin
+    )
+
+    loop = asyncio.new_event_loop()
+
     try:
-        loop = asyncio.new_event_loop()
-        homeduino = Homeduino(
-            args.port, rf_receive_pin=args.receive_pin, rf_send_pin=args.send_pin
-        )
-        sys.exit(
-            loop.run_until_complete(
-                main(homeduino, args.action, args.protocol, args.values)
-            )
-        )
+        if "protocol" in args:
+            asyncio.run(send(homeduino, args.protocol, args.values))
+        else:
+            asyncio.run(listen(homeduino))
+    except KeyboardInterrupt:
+        # Handle keyboard interrupt
+        pass
     finally:
-        _LOGGER.debug("Closing Loop")
         loop.close()
 
     sys.exit(0)

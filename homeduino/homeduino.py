@@ -498,17 +498,7 @@ class Homeduino:
         if self._ping_and_read_task is not None and not (
             self._ping_and_read_task.done() or self._ping_and_read_task.cancelled()
         ):
-            self._ping_and_read_task.cancel()
-            try:
-                await self._ping_and_read_task
-            except asyncio.CancelledError:
-                logger.debug("Ping and read task was cancelled")
-                self._ping_and_read_task = None
-
-        if self._ping_and_read_task is not None:
-            logger.error("Failed to cancel ping and read task")
-            logger.debug("Ping and read task: %s", self._ping_and_read_task)
-            return False
+            return self._ping_and_read_task.cancel()
 
         return True
 
