@@ -586,6 +586,8 @@ class Homeduino:
                         else:
                             failed_pings += 1
 
+
+                await asyncio.sleep(sleep_time)
             except HomeduinoResponseTimeoutError:
                 failed_pings += 1
                 if failed_pings > _ALLOWED_FAILED_PINGS:
@@ -595,8 +597,6 @@ class Homeduino:
                 break
             except Exception:
                 logger.exception("Unexpected error")
-
-            await asyncio.sleep(sleep_time)
 
         self._ping_and_read_task = None
         logger.debug("Ping and read coroutine stopped")
