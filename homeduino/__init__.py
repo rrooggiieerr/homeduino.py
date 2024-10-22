@@ -8,6 +8,7 @@ from .homeduino import (
     BAUD_RATES,
     DEFAULT_BAUD_RATE,
     DEFAULT_RECEIVE_PIN,
+    DEFAULT_REPEATS,
     DEFAULT_SEND_PIN,
     Homeduino,
     HomeduinoDisconnectedError,

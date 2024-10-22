@@ -22,6 +22,7 @@ DEFAULT_BAUD_RATE: Final = 115200
 BAUD_RATES: Final = [57600, DEFAULT_BAUD_RATE]
 DEFAULT_RECEIVE_PIN: Final = 2
 DEFAULT_SEND_PIN: Final = 4
+DEFAULT_REPEATS: Final = 7
 
 _RESPONSE_TIMEOUT = 2
 _READY_TIMEOUT = 5
@@ -412,7 +413,7 @@ class Homeduino:
         else:
             self._dht_read_callbacks[digital_io] = [dht_type, [dht_read_callback]]
 
-    async def rf_send(self, rf_protocol: str, values) -> bool:
+    async def rf_send(self, rf_protocol: str, values, repeats=DEFAULT_REPEATS) -> bool:
         if not self.connected():
             raise HomeduinoDisconnectedError("Homeduino is not connected")
 
@@ -420,7 +421,7 @@ class Homeduino:
             rf_protocol = getattr(sys.modules[controller.__name__], rf_protocol)
             logger.debug(rf_protocol)
 
-            packet = f"RF send {self.rf_send_pin} 3 "
+            packet = f"RF send {self.rf_send_pin} {repeats} "
 
             for pulse_length in rf_protocol.pulse_lengths:
                 packet += f"{pulse_length} "
