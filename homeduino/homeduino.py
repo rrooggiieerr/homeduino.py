@@ -416,6 +416,18 @@ class Homeduino:
     def supports_rf_send(self):
         return self.rf_send_pin is not None
 
+    async def raw_rf_send(self, command: str, repeats=DEFAULT_REPEATS) -> bool:
+        if not self.connected():
+            raise HomeduinoDisconnectedError("Homeduino is not connected")
+
+        if self.supports_rf_send():
+            packet = f"RF send {self.rf_send_pin} {repeats} {command}"
+
+            response = await self.protocol.send(packet)
+            return response == "ACK"
+
+        return False
+
     async def rf_send(self, rf_protocol: str, values, repeats=DEFAULT_REPEATS) -> bool:
         if not self.connected():
             raise HomeduinoDisconnectedError("Homeduino is not connected")
