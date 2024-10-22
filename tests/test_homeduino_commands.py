@@ -34,3 +34,22 @@ class TestHomeduinoCommands(unittest.IsolatedAsyncioTestCase):
             "switch1", {"id": 98765, "unit": 4, "all": False, "state": True}
         )
         self.assertTrue(result)
+
+    async def test_rf_send_3repeats(self):
+        result = await self.homeduino.rf_send(
+            "switch1", {"id": 98765, "unit": 4, "all": False, "state": True}, 3
+        )
+        self.assertTrue(result)
+
+    async def test_raw_rf_send(self):
+        result = await self.homeduino.raw_rf_send(
+            "268 1282 2632 10168 0 0 0 0 020001000100010001000100010001000100010100010000010001000100010001000101000100010000010001010001000001010000010100000101000001000103"
+        )
+        self.assertTrue(result)
+
+    async def test_raw_rf_send_3repeats(self):
+        result = await self.homeduino.raw_rf_send(
+            "268 1282 2632 10168 0 0 0 0 020001000100010001000100010001000100010100010000010001000100010001000101000100010000010001010001000001010000010100000101000001000103",
+            3,
+        )
+        self.assertTrue(result)
