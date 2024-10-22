@@ -602,7 +602,6 @@ class Homeduino:
                         else:
                             failed_pings += 1
 
-
                 await asyncio.sleep(sleep_time)
             except HomeduinoResponseTimeoutError:
                 failed_pings += 1
