@@ -413,11 +413,14 @@ class Homeduino:
         else:
             self._dht_read_callbacks[digital_io] = [dht_type, [dht_read_callback]]
 
+    def supports_rf_send(self):
+        return self.rf_send_pin is not None
+
     async def rf_send(self, rf_protocol: str, values, repeats=DEFAULT_REPEATS) -> bool:
         if not self.connected():
             raise HomeduinoDisconnectedError("Homeduino is not connected")
 
-        if self.rf_send_pin is not None:
+        if self.supports_rf_send():
             rf_protocol = getattr(sys.modules[controller.__name__], rf_protocol)
             logger.debug(rf_protocol)
 
