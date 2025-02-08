@@ -2,6 +2,7 @@
 # pylint: disable=missing-class-docstring
 # pylint: disable=missing-function-docstring
 
+import json
 import logging
 import unittest
 
@@ -10,13 +11,18 @@ from homeduino import Homeduino
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
+_SETTINGS_JSON = "settings.json"
+
 
 class TestHomeduinoCommands(unittest.IsolatedAsyncioTestCase):
     homeduino: Homeduino = None
 
     async def asyncSetUp(self):
-        self.homeduino = Homeduino("/dev/tty.usbserial-110")
-        await self.homeduino.connect()
+        with open(_SETTINGS_JSON, encoding="utf8") as settings_file:
+            settings = json.load(settings_file)
+            serial_port = settings.get("serial_port")
+            self.homeduino = Homeduino(serial_port)
+            await self.homeduino.connect()
 
     async def asyncTearDown(self):
         await self.homeduino.disconnect()
