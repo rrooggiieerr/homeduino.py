@@ -16,6 +16,8 @@ from rfcontrol import controller
 from serial.serialutil import SerialException
 from serial_asyncio_fast import SerialTransport
 
+from .task_helper import save_task_reference
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_BAUD_RATE: Final = 115200
@@ -31,17 +33,6 @@ _RF_SEND_DELAY = 0.2
 _PING_INTERVAL = 5
 _ALLOWED_FAILED_PINGS = 1
 _DHT_READ_DELAY = timedelta(seconds=2)
-
-background_tasks = set()
-
-
-def _add_background_task(task: asyncio.Task) -> None:
-    # Add task to the set. This creates a strong reference.
-    background_tasks.add(task)
-
-    # To prevent keeping references to finished tasks forever, make each task remove its own
-    # reference from the set after completion:
-    task.add_done_callback(background_tasks.discard)
 
 
 class HomeduinoError(Exception):
@@ -230,7 +221,7 @@ class HomeduinoPinMode(IntEnum):
 class Homeduino:
     rf_receive_interrupt: int | None = None
 
-    protocol: HomeduinoProtocol = None
+    protocol: HomeduinoProtocol | None = None
 
     _ping_and_read_task = None
     _loop = None
@@ -319,13 +310,16 @@ class Homeduino:
                 self._ping_and_read_task = asyncio.create_task(
                     self._ping_and_read_coroutine(timedelta(seconds=ping_interval))
                 )
-                _add_background_task(self._ping_and_read_task)
+                save_task_reference(self._ping_and_read_task)
 
             return True
 
         return False
 
     def connected(self) -> bool:
+        """
+        True if there is a connection with the Homeduino.
+        """
         if self.protocol is None or self.protocol.transport is None:
             return False
 
