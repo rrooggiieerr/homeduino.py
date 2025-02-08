@@ -42,12 +42,14 @@ class TestHomeduinoCommands(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result)
 
     async def test_raw_rf_send(self):
+        # pylint: disable=line-too-long
         result = await self.homeduino.raw_rf_send(
             "268 1282 2632 10168 0 0 0 0 020001000100010001000100010001000100010100010000010001000100010001000101000100010000010001010001000001010000010100000101000001000103"
         )
         self.assertTrue(result)
 
     async def test_raw_rf_send_3repeats(self):
+        # pylint: disable=line-too-long
         result = await self.homeduino.raw_rf_send(
             "268 1282 2632 10168 0 0 0 0 020001000100010001000100010001000100010100010000010001000100010001000101000100010000010001010001000001010000010100000101000001000103",
             3,
