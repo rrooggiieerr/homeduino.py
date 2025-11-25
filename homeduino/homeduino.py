@@ -348,6 +348,9 @@ class Homeduino:
         return False
 
     async def disconnect(self) -> bool:
+        """
+        Disconnect from the Homeduino.
+        """
         await self._cancel_ping_and_read()
         return await self._disconnect()
 
