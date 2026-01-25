@@ -68,6 +68,7 @@ class HomeduinoProtocol(asyncio.Protocol):
 
     _str_buffer = ""
     _awaiting_response = False
+    _response_timeout_counter = 0
 
     def __init__(
         self,
@@ -182,7 +183,8 @@ class HomeduinoProtocol(asyncio.Protocol):
                 timeout = time.time() + _RESPONSE_TIMEOUT
                 while len(self.response_buffer) == 0:
                     if time.time() > timeout:
-                        logger.error("Timeout while waiting for command response")
+                        self._response_timeout_counter += 1
+                        logger.error("Timeout while waiting for command response %i consecutive times", self._response_timeout_counter)
                         raise HomeduinoResponseTimeoutError(
                             "Timeout while waiting for command response"
                         )
@@ -190,6 +192,7 @@ class HomeduinoProtocol(asyncio.Protocol):
                     await asyncio.sleep(0.01)
 
                 self._awaiting_response = False
+                self._response_timeout_counter = 0
 
             response = self.response_buffer.pop()
             logger.debug("Command response received: %s", response)
@@ -225,6 +228,8 @@ class Homeduino:
 
     _ping_and_read_task = None
     _loop = None
+
+    _ping_failed_counter = 0
 
     def __init__(
         self,
@@ -364,10 +369,12 @@ class Homeduino:
 
         response = await self.protocol.send(message)
         if response == message:
+            self._ping_failed_counter = 0
             logger.debug("Pinging Homeduino successful")
             return True
 
-        logger.error("Pinging Homeduino failed")
+        self._ping_failed_counter += 1
+        logger.error("Pinging Homeduino failed %i consecutive times", self._ping_failed_counter)
         return False
 
     async def ping(self) -> bool:
