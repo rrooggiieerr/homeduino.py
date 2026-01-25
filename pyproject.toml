@@ -30,8 +30,8 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules"
 ]
 dependencies = [
-    "pyserial-asyncio-fast>=0.14",
-    "rfcontrolpy==0.0.9"
+    "pyserial-asyncio-fast>=0.16",
+    "rfcontrolpy==0.0.10"
 ]
 
 [project.urls]
