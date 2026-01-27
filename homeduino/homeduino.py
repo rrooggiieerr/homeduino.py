@@ -184,7 +184,10 @@ class HomeduinoProtocol(asyncio.Protocol):
                 while len(self.response_buffer) == 0:
                     if time.time() > timeout:
                         self._response_timeout_counter += 1
-                        logger.error("Timeout while waiting for command response %i consecutive times", self._response_timeout_counter)
+                        logger.error(
+                            "Timeout while waiting for command response %i consecutive times",
+                            self._response_timeout_counter,
+                        )
                         raise HomeduinoResponseTimeoutError(
                             "Timeout while waiting for command response"
                         )
@@ -374,7 +377,9 @@ class Homeduino:
             return True
 
         self._ping_failed_counter += 1
-        logger.error("Pinging Homeduino failed %i consecutive times", self._ping_failed_counter)
+        logger.error(
+            "Pinging Homeduino failed %i consecutive times", self._ping_failed_counter
+        )
         return False
 
     async def ping(self) -> bool:
@@ -576,10 +581,10 @@ class Homeduino:
                             (dht_type, dht_read_callbacks),
                         ) in self._dht_read_callbacks.copy().items():
                             if not self.protocol.busy():
-                                (temperature, humidity) = await self.dht_read(
+                                temperature, humidity = await self.dht_read(
                                     dht_type, digital_io
                                 )
-                                (previous_temperature, previous_humidity) = dht_values[
+                                previous_temperature, previous_humidity = dht_values[
                                     digital_io
                                 ]
                                 if temperature is not None and (
