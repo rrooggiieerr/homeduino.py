@@ -31,7 +31,7 @@ _READY_TIMEOUT = 5
 _BUSY_TIMEOUT = 1
 _RF_SEND_DELAY = 0.2
 _PING_INTERVAL = 5
-_ALLOWED_FAILED_PINGS = 1
+_ALLOWED_FAILED_PINGS = 5
 _DHT_READ_DELAY = timedelta(seconds=2)
 
 
@@ -617,6 +617,7 @@ class Homeduino:
                 failed_pings += 1
                 if failed_pings > _ALLOWED_FAILED_PINGS:
                     logger.error("Unable to ping Homeduino")
+                    self._reconnect()
             except asyncio.CancelledError:
                 logger.debug("Ping and read coroutine was canceled")
                 break
