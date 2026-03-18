@@ -339,21 +339,22 @@ class Homeduino:
             if self.protocol.transport is not None:
                 self.protocol.transport.close()
 
-            start_time = datetime.now()
-            while self.protocol.ready:
-                if (datetime.now() - start_time).total_seconds() > _READY_TIMEOUT:
-                    logger.error("Timeout while waiting for Homeduino to disconnect")
-                    raise HomeduinoResponseTimeoutError(
-                        "Timeout while waiting for Homeduino to disconnect"
-                    )
-                logger.debug("Waiting for Homeduino to disconnect")
-                await asyncio.sleep(0.01)
+                start_time = datetime.now()
+                while self.protocol.transport is not None:
+                    if (datetime.now() - start_time).total_seconds() > _READY_TIMEOUT:
+                        logger.error(
+                            "Timeout while waiting for Homeduino to disconnect"
+                        )
+                        raise HomeduinoResponseTimeoutError(
+                            "Timeout while waiting for Homeduino to disconnect"
+                        )
+                    logger.debug("Waiting for Homeduino to disconnect")
+                    await asyncio.sleep(0.01)
 
             self.protocol = None
             logger.debug("Homeduino disconnected")
-            return True
 
-        return False
+        return not self.connected()
 
     async def disconnect(self) -> bool:
         """
