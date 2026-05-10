@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.24", "hatch-vcs"]
+requires = ["hatchling>=1.29", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.hooks.vcs]
@@ -32,7 +32,7 @@ classifiers = [
 dependencies = [
     "pyserial>=3.5",
     "pyserial-asyncio-fast>=0.16",
-    "rfcontrolpy==0.0.11"
+    "rfcontrolpy==0.0.12"
 ]
 
 [project.urls]
