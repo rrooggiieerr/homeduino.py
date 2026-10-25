@@ -1,2 +1,2 @@
-serialx>=1.8.0
-rfcontrolpy>=0.0.11
+serialx>=1.15.0
+rfcontrolpy>=0.0.12
