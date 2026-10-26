@@ -17,8 +17,6 @@ from rfcontrol import controller
 import serialx
 from serialx import BaseSerialTransport, Parity, SerialException, StopBits
 
-from .task_helper import save_task_reference
-
 logger = logging.getLogger(__name__)
 
 DEFAULT_BAUD_RATE: Final = 115200
@@ -341,7 +339,6 @@ class Homeduino:
                 self._ping_and_read_task = asyncio.create_task(
                     self._ping_and_read_coroutine(timedelta(seconds=ping_interval))
                 )
-                save_task_reference(self._ping_and_read_task)
 
             return True
 
