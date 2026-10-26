@@ -95,6 +95,8 @@ class HomeduinoProtocol(asyncio.Protocol):
         self._rf_receive_callbacks: list[RfReceiveCallback] = []
         self.response_buffer: deque[str] = deque()
         self._send_lock = asyncio.Lock()
+        # Sends RF commands one at a time, with a delay in between.
+        self._rf_send_lock = asyncio.Lock()
 
     def busy(self) -> bool:
         """Return True while a command is waiting for its response."""
@@ -201,16 +203,22 @@ class HomeduinoProtocol(asyncio.Protocol):
             raise HomeduinoDisconnectedError("Homeduino is not connected")
 
         is_rf_send = packet.startswith("RF send ")
-        if is_rf_send and self._last_rf_send is not None:
-            # Allow some time between rf send commands to prevent flooding
-            delay = self._last_rf_send + _RF_SEND_DELAY - time.monotonic()
-            if delay > 0:
-                logger.debug("RF send delay")
-                await asyncio.sleep(delay)
 
-        try:
+        # RF sends wait for the previous RF send and the delay without holding the send
+        # lock, so other commands can be sent in the meantime.
+        async with self._rf_send_lock if is_rf_send else contextlib.nullcontext():
+            # Allow some time between rf send commands to prevent flooding.
+            if is_rf_send and self._last_rf_send is not None:
+                delay = self._last_rf_send + _RF_SEND_DELAY - time.monotonic()
+                if delay > 0:
+                    logger.debug("RF send delay")
+                    await asyncio.sleep(delay)
+
             data = packet + "\n"
             async with self._send_lock:
+                if self.transport is None:
+                    raise HomeduinoDisconnectedError("Homeduino is not connected")
+
                 # Drop responses that arrived too late for an earlier command.
                 self.response_buffer.clear()
                 self._awaiting_response = True
@@ -234,16 +242,15 @@ class HomeduinoProtocol(asyncio.Protocol):
                 finally:
                     # Responses that arrive after a timeout aren't stored.
                     self._awaiting_response = False
+                    if is_rf_send:
+                        # Set last RF send timestamp
+                        self._last_rf_send = time.monotonic()
 
                 self._response_timeout_counter = 0
                 response = self.response_buffer.popleft()
 
-            logger.debug("Command response received: %s", response)
-            return response.strip()
-        finally:
-            if is_rf_send:
-                # Set last RF send timestamp
-                self._last_rf_send = time.monotonic()
+        logger.debug("Command response received: %s", response)
+        return response.strip()
 
     def connection_lost(self, exc: Exception | None) -> None:
         """Clear the transport when the connection is lost."""

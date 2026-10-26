@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Callable
+import time
 from typing import Any, cast
 from unittest.mock import Mock
 
@@ -143,6 +144,37 @@ async def test_send_after_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     protocol.data_received(b"PING 1\r\n")
     connect(protocol, "PING 2")
     assert await protocol.send("PING 2") == "PING 2"
+
+
+class TimedTransport:
+    """Transport that remembers when commands are written, and answers with ACK."""
+
+    def __init__(self, protocol: HomeduinoProtocol) -> None:
+        self.protocol = protocol
+        self.writes: list[tuple[float, str]] = []
+
+    def write(self, data: bytes) -> None:
+        self.writes.append((time.monotonic(), data.decode().split(" ")[0]))
+        asyncio.get_running_loop().call_soon(self.protocol.data_received, b"ACK\r\n")
+
+
+async def test_rf_send_delay() -> None:
+    protocol = HomeduinoProtocol()
+    transport = TimedTransport(protocol)
+    protocol.connection_made(cast(BaseSerialTransport, transport))
+
+    # RF sends that are started at the same time are sent with a delay in between,
+    # other commands are sent during the delay.
+    packet = f"RF send 4 3 {_SWITCH1_PULSE_LENGTHS} {_SWITCH1_PULSE_SEQUENCE}"
+    await asyncio.gather(
+        protocol.send(packet), protocol.send(packet), protocol.send("PING test")
+    )
+
+    assert [command for _, command in transport.writes] == ["RF", "PING", "RF"]
+    first_rf_send, _, second_rf_send = (
+        write_time for write_time, _ in transport.writes
+    )
+    assert second_rf_send - first_rf_send >= homeduino_module._RF_SEND_DELAY
 
 
 async def test_send_disconnected() -> None:
