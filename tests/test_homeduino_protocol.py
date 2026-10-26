@@ -252,3 +252,29 @@ async def test_add_read_callback_invalid_pin() -> None:
     await homeduino.add_digital_read_callback(13, lambda value: None)
     homeduino.add_analog_read_callback(0, lambda value: None)
     homeduino.add_analog_read_callback(7, lambda value: None)
+
+
+async def test_disconnect_stops_ping_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    transports: list[FakeTransport] = []
+
+    async def create_serial_connection(
+        loop: asyncio.AbstractEventLoop,
+        protocol_factory: Callable[[], HomeduinoProtocol],
+        **_kwargs: Any,
+    ) -> tuple[FakeTransport, HomeduinoProtocol]:
+        protocol = protocol_factory()
+        transports.append(connect(protocol))
+        loop.call_soon(protocol.data_received, b"ready\r\n")
+        return transports[0], protocol
+
+    monkeypatch.setattr(serialx, "create_serial_connection", create_serial_connection)
+
+    homeduino = Homeduino("/dev/fake")
+    assert await homeduino.connect(ping_interval=60)
+    task = homeduino._ping_and_read_task
+    assert task is not None
+
+    assert await homeduino.disconnect()
+    # The ping task has stopped before disconnect() returns.
+    assert task.done()
+    assert transports[0].protocol.transport is None

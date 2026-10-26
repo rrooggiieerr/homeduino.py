@@ -8,6 +8,7 @@ import asyncio
 from asyncio.transports import BaseTransport
 from collections import deque
 from collections.abc import Callable
+import contextlib
 from datetime import datetime
 from enum import IntEnum
 import logging
@@ -601,13 +602,13 @@ class Homeduino:
         protocol_names = [protocol.name for protocol in controller.get_all_protocols()]
         return sorted(protocol_names, key=alphanum_key)
 
-    async def _cancel_ping_and_read(self) -> bool:
-        if self._ping_and_read_task is not None and not (
-            self._ping_and_read_task.done() or self._ping_and_read_task.cancelled()
-        ):
-            return self._ping_and_read_task.cancel()
-
-        return True
+    async def _cancel_ping_and_read(self) -> None:
+        task = self._ping_and_read_task
+        if task is not None and not task.done():
+            task.cancel()
+            # Wait for the task to stop, so it doesn't use the connection anymore.
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
     async def _ping_and_read_coroutine(self, ping_interval: float) -> None:
         """Ping the Homeduino and read its inputs.
