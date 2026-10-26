@@ -7,7 +7,11 @@ import pytest
 from rfcontrol import controller
 from serialx import BaseSerialTransport
 
-from homeduino import Homeduino
+from homeduino import (
+    Homeduino,
+    HomeduinoResponseTimeoutError,
+    homeduino as homeduino_module,
+)
 from homeduino.homeduino import HomeduinoProtocol
 
 _SWITCH1_PULSE_LENGTHS = "268 1282 2632 10168 0 0 0 0"
@@ -83,6 +87,27 @@ async def test_send() -> None:
 
     assert await protocol.send("PING test") == "PING test"
     assert transport.written == ["PING test\n"]
+
+
+class SilentTransport:
+    """Transport that never answers."""
+
+    def write(self, data: bytes) -> None:
+        pass
+
+
+async def test_send_after_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(homeduino_module, "_RESPONSE_TIMEOUT", 0.05)
+    protocol = HomeduinoProtocol()
+    protocol.connection_made(cast(BaseSerialTransport, SilentTransport()))
+
+    with pytest.raises(HomeduinoResponseTimeoutError):
+        await protocol.send("PING 1")
+
+    # A response that arrives too late isn't returned for the next command.
+    protocol.data_received(b"PING 1\r\n")
+    connect(protocol, "PING 2")
+    assert await protocol.send("PING 2") == "PING 2"
 
 
 async def test_send_disconnected() -> None:

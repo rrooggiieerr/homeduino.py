@@ -192,28 +192,33 @@ class HomeduinoProtocol(asyncio.Protocol):
         try:
             data = packet + "\n"
             async with self._send_lock:
+                # Drop responses that arrived too late for an earlier command.
+                self.response_buffer.clear()
                 self._awaiting_response = True
-                logger.debug("Writing data: %s", repr(data))
-                self.transport.write(data.encode())
+                try:
+                    logger.debug("Writing data: %s", repr(data))
+                    self.transport.write(data.encode())
 
-                timeout = time.time() + _RESPONSE_TIMEOUT
-                while len(self.response_buffer) == 0:
-                    if time.time() > timeout:
-                        self._response_timeout_counter += 1
-                        logger.error(
-                            "Timeout while waiting for command response %i consecutive times",
-                            self._response_timeout_counter,
-                        )
-                        raise HomeduinoResponseTimeoutError(
-                            "Timeout while waiting for command response"
-                        )
-                    logger.debug("Waiting for command response")
-                    await asyncio.sleep(0.01)
+                    timeout = time.time() + _RESPONSE_TIMEOUT
+                    while len(self.response_buffer) == 0:
+                        if time.time() > timeout:
+                            self._response_timeout_counter += 1
+                            logger.error(
+                                "Timeout while waiting for command response %i consecutive times",
+                                self._response_timeout_counter,
+                            )
+                            raise HomeduinoResponseTimeoutError(
+                                "Timeout while waiting for command response"
+                            )
+                        logger.debug("Waiting for command response")
+                        await asyncio.sleep(0.01)
+                finally:
+                    # Responses that arrive after a timeout aren't stored.
+                    self._awaiting_response = False
 
-                self._awaiting_response = False
                 self._response_timeout_counter = 0
+                response = self.response_buffer.popleft()
 
-            response = self.response_buffer.pop()
             logger.debug("Command response received: %s", response)
             return response.strip()
         finally:
