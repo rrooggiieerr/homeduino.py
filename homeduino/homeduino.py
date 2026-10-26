@@ -8,7 +8,7 @@ import asyncio
 from asyncio.transports import BaseTransport
 from collections import deque
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import IntEnum
 import logging
 import re
@@ -34,7 +34,7 @@ _BUSY_TIMEOUT = 1
 _RF_SEND_DELAY = 0.2
 _PING_INTERVAL = 5
 _ALLOWED_FAILED_PINGS = 5
-_DHT_READ_DELAY = timedelta(seconds=2)
+_DHT_READ_DELAY = 2
 
 RfReceiveCallback = Callable[[dict[str, Any]], None]
 DigitalReadCallback = Callable[[bool], None]
@@ -71,8 +71,11 @@ class HomeduinoProtocol(asyncio.Protocol):
     transport: BaseSerialTransport | None = None
 
     ready = False
-    _last_rf_send: datetime | None = None
+    # Monotonic time of the last RF send.
+    _last_rf_send: float | None = None
     last_message_received: datetime | None = None
+    # Monotonic time of the last received message.
+    last_message_time: float | None = None
 
     _str_buffer = ""
     _awaiting_response = False
@@ -138,6 +141,7 @@ class HomeduinoProtocol(asyncio.Protocol):
                 elif line != "":
                     logger.error("Unhandled data received '%s'", line)
                 self.last_message_received = datetime.now()
+                self.last_message_time = time.monotonic()
 
     def handle_ready(self) -> None:
         """Mark the Homeduino as ready."""
@@ -183,11 +187,10 @@ class HomeduinoProtocol(asyncio.Protocol):
         is_rf_send = packet.startswith("RF send ")
         if is_rf_send and self._last_rf_send is not None:
             # Allow some time between rf send commands to prevent flooding
-            while (
-                datetime.now() - self._last_rf_send
-            ).total_seconds() <= _RF_SEND_DELAY:
+            delay = self._last_rf_send + _RF_SEND_DELAY - time.monotonic()
+            if delay > 0:
                 logger.debug("RF send delay")
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(delay)
 
         try:
             data = packet + "\n"
@@ -199,9 +202,9 @@ class HomeduinoProtocol(asyncio.Protocol):
                     logger.debug("Writing data: %s", repr(data))
                     self.transport.write(data.encode())
 
-                    timeout = time.time() + _RESPONSE_TIMEOUT
+                    timeout = time.monotonic() + _RESPONSE_TIMEOUT
                     while len(self.response_buffer) == 0:
-                        if time.time() > timeout:
+                        if time.monotonic() > timeout:
                             self._response_timeout_counter += 1
                             logger.error(
                                 "Timeout while waiting for command response %i consecutive times",
@@ -224,7 +227,7 @@ class HomeduinoProtocol(asyncio.Protocol):
         finally:
             if is_rf_send:
                 # Set last RF send timestamp
-                self._last_rf_send = datetime.now()
+                self._last_rf_send = time.monotonic()
 
     def connection_lost(self, exc: Exception | None) -> None:
         """Clear the transport when the connection is lost."""
@@ -304,9 +307,9 @@ class Homeduino:
                 )
                 self.protocol = protocol
 
-                start_time = datetime.now()
+                timeout = time.monotonic() + _READY_TIMEOUT
                 while self.protocol is not None and not self.protocol.ready:
-                    if (datetime.now() - start_time).total_seconds() > _READY_TIMEOUT:
+                    if time.monotonic() > timeout:
                         break
                     logger.debug("Waiting for Homeduino to become ready")
                     await asyncio.sleep(0.1)
@@ -351,7 +354,7 @@ class Homeduino:
         if not self.connected() and await self._connect():
             if ping_interval > 0:
                 self._ping_and_read_task = asyncio.create_task(
-                    self._ping_and_read_coroutine(timedelta(seconds=ping_interval))
+                    self._ping_and_read_coroutine(ping_interval)
                 )
 
             return True
@@ -368,9 +371,9 @@ class Homeduino:
             if self.protocol.transport is not None:
                 self.protocol.transport.close()
 
-                start_time = datetime.now()
+                timeout = time.monotonic() + _READY_TIMEOUT
                 while self.protocol.transport is not None:
-                    if (datetime.now() - start_time).total_seconds() > _READY_TIMEOUT:
+                    if time.monotonic() > timeout:
                         logger.error(
                             "Timeout while waiting for Homeduino to disconnect"
                         )
@@ -579,7 +582,7 @@ class Homeduino:
 
         return True
 
-    async def _ping_and_read_coroutine(self, ping_interval: timedelta) -> None:
+    async def _ping_and_read_coroutine(self, ping_interval: float) -> None:
         """Ping the Homeduino and read its inputs.
 
         To test the connection for availability a ping message can be sent every interval if no
@@ -589,7 +592,7 @@ class Homeduino:
         digital_io_values: list[bool | None] = [None] * 14
         analog_input_values: list[int | None] = [None] * 8
         dht_values: list[tuple[float | None, float | None]] = [(None, None)] * 14
-        last_dht_read: datetime | None = None
+        last_dht_read: float | None = None
         sleep_time = 0.1
         while True:
             try:
@@ -635,7 +638,7 @@ class Homeduino:
 
                 if (
                     last_dht_read is None
-                    or datetime.now() > last_dht_read + _DHT_READ_DELAY
+                    or time.monotonic() > last_dht_read + _DHT_READ_DELAY
                 ):
                     for (
                         digital_io,
@@ -646,7 +649,7 @@ class Homeduino:
                         temperature, humidity = await self.dht_read(
                             dht_type, digital_io
                         )
-                        last_dht_read = datetime.now()
+                        last_dht_read = time.monotonic()
                         # Both are None if the DHT couldn't be read.
                         if (
                             temperature is None
@@ -661,10 +664,10 @@ class Homeduino:
                             dht_read_callback(temperature, humidity)
                         dht_values[digital_io] = (temperature, humidity)
 
-                last_message_received = self.protocol.last_message_received
+                last_message_time = self.protocol.last_message_time
                 if (
-                    last_message_received is None
-                    or datetime.now() > last_message_received + ping_interval
+                    last_message_time is None
+                    or time.monotonic() > last_message_time + ping_interval
                 ):
                     if await self.ping():
                         failed_pings = 0
