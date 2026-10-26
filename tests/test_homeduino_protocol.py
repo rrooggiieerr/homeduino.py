@@ -146,6 +146,15 @@ async def test_rf_send_raw_protocol() -> None:
     assert transport.written == ["RF send 4 3 300 900 9000 0 0 0 0 0 0101010102\n"]
 
 
+async def test_analog_write() -> None:
+    homeduino = Homeduino("/dev/null")
+    homeduino.protocol = HomeduinoProtocol()
+    transport = connect(homeduino.protocol)
+
+    assert await homeduino.analog_write(5, 128)
+    assert transport.written == ["AW 5 128\n"]
+
+
 async def test_dht_read() -> None:
     homeduino = Homeduino("/dev/null")
     homeduino.protocol = HomeduinoProtocol()

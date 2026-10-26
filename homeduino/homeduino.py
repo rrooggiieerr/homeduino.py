@@ -531,11 +531,11 @@ class Homeduino:
         return response == "ACK 1"
 
     async def analog_write(self, digital_io: int, value: int) -> bool:
-        """Analog write."""
+        """Analog (PWM) write."""
         if digital_io not in (3, 5, 6, 9, 10, 11):
             return False
 
-        response = await self.send(f"DW {digital_io} {value}")
+        response = await self.send(f"AW {digital_io} {value}")
         return response == "ACK"
 
     async def analog_read(self, analog_input: int) -> int:
