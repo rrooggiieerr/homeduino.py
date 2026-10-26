@@ -1,4 +1,8 @@
-"""Homeduino library."""
+"""Connection with a Homeduino over a serial port.
+
+Sends and receives RF messages, reads and writes digital and analog pins, and reads
+DHT sensors.
+"""
 
 import asyncio
 from asyncio.transports import BaseTransport
@@ -103,8 +107,8 @@ class HomeduinoProtocol(asyncio.Protocol):
             self._rf_receive_callbacks.append(rf_receive_callback)
 
     def connection_made(self, transport: BaseTransport) -> None:
-        # The transport is created by serialx.create_serial_connection().
         """Store the transport of the new connection."""
+        # The transport is created by serialx.create_serial_connection().
         self.transport = cast(BaseSerialTransport, transport)
 
     def data_received(self, data: bytes) -> None:
@@ -239,7 +243,12 @@ class HomeduinoPinMode(IntEnum):
 
 
 class Homeduino:
-    """Homeduino connected to a serial port."""
+    """Homeduino connected to a serial port.
+
+    Sends and receives RF messages, reads and writes digital and analog pins, and
+    reads DHT sensors. Callbacks are called on received RF messages and on changes
+    of the inputs.
+    """
 
     rf_receive_interrupt: int | None = None
 
@@ -257,7 +266,7 @@ class Homeduino:
         rf_receive_pin: int | None = DEFAULT_RECEIVE_PIN,
         rf_send_pin: int | None = DEFAULT_SEND_PIN,
     ):
-        """Initialize class."""
+        """Initialize Homeduino."""
         self._path = path
         self._baud_rate = baud_rate
         if rf_receive_pin is not None:
