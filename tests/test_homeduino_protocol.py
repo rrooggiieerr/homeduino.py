@@ -1,17 +1,135 @@
-# pylint: disable=missing-module-docstring
-# pylint: disable=missing-class-docstring
-# pylint: disable=missing-function-docstring
+"""Tests for the serial protocol, these don't need a connected Homeduino."""
 
-import logging
-import unittest
+import asyncio
+from typing import Any, cast
 
+import pytest
+from rfcontrol import controller
+from serialx import BaseSerialTransport
+
+from homeduino import Homeduino
 from homeduino.homeduino import HomeduinoProtocol
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
+_SWITCH1_PULSE_LENGTHS = "268 1282 2632 10168 0 0 0 0"
+_SWITCH1_PULSE_SEQUENCE = (
+    "02000100010001000100010001000100010001010001000001000100010001000100010100"
+    "0100010000010001010001000001010000010100000101000001000103"
+)
+_SWITCH1_VALUES = {"id": 98765, "unit": 4, "all": False, "state": True}
 
 
-class TestHomeduinoProtocol(unittest.TestCase):
-    def test_init(self) -> None:
-        protocol = HomeduinoProtocol()
-        self.assertIsInstance(protocol, HomeduinoProtocol)
+class FakeTransport:
+    """Transport that answers every written command with a fixed response."""
+
+    def __init__(self, protocol: HomeduinoProtocol, response: str = "ACK") -> None:
+        self.protocol = protocol
+        self.response = response
+        self.written: list[str] = []
+
+    def write(self, data: bytes) -> None:
+        self.written.append(data.decode())
+        asyncio.get_running_loop().call_soon(
+            self.protocol.data_received, f"{self.response}\r\n".encode()
+        )
+
+    def close(self) -> None:
+        self.protocol.connection_lost(None)
+
+
+def connect(protocol: HomeduinoProtocol, response: str = "ACK") -> FakeTransport:
+    transport = FakeTransport(protocol, response)
+    protocol.connection_made(cast(BaseSerialTransport, transport))
+    return transport
+
+
+def test_init() -> None:
+    protocol = HomeduinoProtocol()
+    assert isinstance(protocol, HomeduinoProtocol)
+
+
+def test_ready() -> None:
+    protocol = HomeduinoProtocol()
+    protocol.data_received(b"ready\r\n")
+    assert protocol.ready
+    assert protocol.last_message_received is not None
+
+
+def test_rf_receive() -> None:
+    protocol = HomeduinoProtocol()
+    received: list[dict[str, Any]] = []
+    protocol.add_rf_receive_callback(received.append)
+
+    # A line can be split over several chunks of data.
+    line = f"RF receive {_SWITCH1_PULSE_LENGTHS} {_SWITCH1_PULSE_SEQUENCE}\r\n"
+    protocol.data_received(line[:20].encode())
+    assert received == []
+    protocol.data_received(line[20:].encode())
+
+    assert {"protocol": "switch1", "values": _SWITCH1_VALUES} in received
+
+
+def test_unknown_rf_receive() -> None:
+    protocol = HomeduinoProtocol()
+    received: list[dict[str, Any]] = []
+    protocol.add_rf_receive_callback(received.append)
+
+    protocol.data_received(b"RF receive 100 200 0 0 0 0 0 0 0101\r\n")
+    assert received == []
+
+
+async def test_send() -> None:
+    protocol = HomeduinoProtocol()
+    transport = connect(protocol, "PING test")
+
+    assert await protocol.send("PING test") == "PING test"
+    assert transport.written == ["PING test\n"]
+
+
+async def test_send_disconnected() -> None:
+    protocol = HomeduinoProtocol()
+    with pytest.raises(Exception, match="not connected"):
+        await protocol.send("PING test")
+
+
+async def test_rf_send() -> None:
+    homeduino = Homeduino("/dev/null")
+    homeduino.protocol = HomeduinoProtocol()
+    transport = connect(homeduino.protocol)
+
+    assert await homeduino.rf_send("switch1", _SWITCH1_VALUES, 3)
+    assert transport.written == [
+        f"RF send 4 3 {_SWITCH1_PULSE_LENGTHS} {_SWITCH1_PULSE_SEQUENCE}\n"
+    ]
+
+
+async def test_rf_send_raw_protocol() -> None:
+    if getattr(controller, "rawswitch", None) is None:
+        pytest.skip("rfcontrolpy doesn't have the rawswitch protocol")
+
+    homeduino = Homeduino("/dev/null")
+    homeduino.protocol = HomeduinoProtocol()
+    transport = connect(homeduino.protocol)
+
+    # The pulse lengths of the raw protocols are set by encode().
+    values = {
+        "pulse_lengths": [300, 900, 9000],
+        "pulses_on": "0101010102",
+        "pulses_off": "0110101002",
+        "state": True,
+    }
+    assert await homeduino.rf_send("rawswitch", values, 3)
+    assert transport.written == ["RF send 4 3 300 900 9000 0 0 0 0 0 0101010102\n"]
+
+
+async def test_dht_read() -> None:
+    homeduino = Homeduino("/dev/null")
+    homeduino.protocol = HomeduinoProtocol()
+    connect(homeduino.protocol, "ACK 21.5 45.0")
+
+    assert await homeduino.dht_read(22, 5) == (21.5, 45.0)
+
+
+def test_get_protocols() -> None:
+    protocols = Homeduino.get_protocols()
+    assert "switch1" in protocols
+    assert protocols.index("switch2") < protocols.index("switch10")
