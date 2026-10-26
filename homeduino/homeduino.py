@@ -36,6 +36,11 @@ _PING_INTERVAL = 5
 _ALLOWED_FAILED_PINGS = 5
 _DHT_READ_DELAY = 2
 
+# The pins of the Arduino Nano that can be used for inputs. Digital pins 0 and 1 are
+# used for the serial connection.
+_DIGITAL_IOS = range(2, 14)
+_ANALOG_INPUTS = range(8)
+
 RfReceiveCallback = Callable[[dict[str, Any]], None]
 DigitalReadCallback = Callable[[bool], None]
 AnalogReadCallback = Callable[[int], None]
@@ -442,6 +447,8 @@ class Homeduino:
         self, digital_io: int, digital_read_callback: DigitalReadCallback
     ) -> None:
         """Add a callback for changes of a digital input."""
+        if digital_io not in _DIGITAL_IOS:
+            raise ValueError(f"Invalid digital I/O {digital_io}")
         if self.connected():
             await self.pin_mode(digital_io, HomeduinoPinMode.INPUT_PULLUP)
         if digital_io in self._digital_read_callbacks:
@@ -453,6 +460,8 @@ class Homeduino:
         self, analog_input: int, analog_read_callback: AnalogReadCallback
     ) -> None:
         """Add a callback for changes of an analog input."""
+        if analog_input not in _ANALOG_INPUTS:
+            raise ValueError(f"Invalid analog input {analog_input}")
         if analog_input in self._analog_read_callbacks:
             self._analog_read_callbacks[analog_input].append(analog_read_callback)
         else:
@@ -462,6 +471,8 @@ class Homeduino:
         self, dht_type: int, digital_io: int, dht_read_callback: DhtReadCallback
     ) -> None:
         """Add a callback for changes of a DHT sensor."""
+        if digital_io not in _DIGITAL_IOS:
+            raise ValueError(f"Invalid digital I/O {digital_io}")
         if self.connected():
             await self.pin_mode(digital_io, HomeduinoPinMode.INPUT)
         if digital_io in self._dht_read_callbacks:

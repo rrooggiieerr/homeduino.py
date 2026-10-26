@@ -199,3 +199,24 @@ async def test_connect_not_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     # The serial port is closed again.
     transport.close.assert_called_once()
     assert homeduino.protocol is None
+
+
+async def test_add_read_callback_invalid_pin() -> None:
+    homeduino = Homeduino("/dev/null")
+
+    with pytest.raises(ValueError, match="Invalid digital I/O 1"):
+        await homeduino.add_digital_read_callback(1, lambda value: None)
+    with pytest.raises(ValueError, match="Invalid digital I/O 14"):
+        await homeduino.add_digital_read_callback(14, lambda value: None)
+    with pytest.raises(ValueError, match="Invalid analog input 8"):
+        homeduino.add_analog_read_callback(8, lambda value: None)
+    with pytest.raises(ValueError, match="Invalid digital I/O 14"):
+        await homeduino.add_dht_read_callback(
+            22, 14, lambda temperature, humidity: None
+        )
+
+    # The first and last valid pins are accepted.
+    await homeduino.add_digital_read_callback(2, lambda value: None)
+    await homeduino.add_digital_read_callback(13, lambda value: None)
+    homeduino.add_analog_read_callback(0, lambda value: None)
+    homeduino.add_analog_read_callback(7, lambda value: None)
