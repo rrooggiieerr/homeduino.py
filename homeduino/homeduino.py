@@ -1,18 +1,21 @@
+"""Homeduino library."""
+
 import asyncio
-import logging
-import re
-import sys
-import time
 from asyncio.transports import BaseTransport
 from collections import deque
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from enum import IntEnum
 from functools import partial
-from typing import Any, Final, Optional
+import logging
+import re
+import time
+from types import ModuleType
+from typing import Any, Final, cast
 
 from rfcontrol import controller
 import serialx
-from serialx import Parity, SerialException, SerialTransport, StopBits
+from serialx import BaseSerialTransport, Parity, SerialException, StopBits
 
 from .task_helper import save_task_reference
 
@@ -32,14 +35,18 @@ _PING_INTERVAL = 5
 _ALLOWED_FAILED_PINGS = 5
 _DHT_READ_DELAY = timedelta(seconds=2)
 
+RfReceiveCallback = Callable[[dict[str, Any]], None]
+DigitalReadCallback = Callable[[bool], None]
+AnalogReadCallback = Callable[[int], None]
+DhtReadCallback = Callable[[float, float], None]
+
 
 class HomeduinoError(Exception):
     """Generic Homeduino error."""
 
 
 class HomeduinoResponseTimeoutError(HomeduinoError):
-    """
-    Response timeout error.
+    """Response timeout error.
 
     If the response takes to long to receive.
     """
@@ -58,11 +65,13 @@ class HomeduinoTooBusyError(HomeduinoError):
 
 
 class HomeduinoProtocol(asyncio.Protocol):
-    transport: SerialTransport = None
+    """Protocol for the serial connection with a Homeduino."""
+
+    transport: BaseSerialTransport | None = None
 
     ready = False
-    _last_rf_send = None
-    last_message_received = None
+    _last_rf_send: datetime | None = None
+    last_message_received: datetime | None = None
 
     _str_buffer = ""
     _awaiting_response = False
@@ -73,27 +82,35 @@ class HomeduinoProtocol(asyncio.Protocol):
         **_kwargs: Any,
     ):
         """Initialize class."""
-        self._rf_receive_callbacks = []
-        self.response_buffer = deque()
+        self._rf_receive_callbacks: list[RfReceiveCallback] = []
+        self.response_buffer: deque[str] = deque()
         self._send_lock = asyncio.Lock()
 
-    def busy(self):
+    def busy(self) -> bool:
+        """Return True while a command is waiting for its response."""
         return self._send_lock.locked()
 
     async def set_rf_receive_interrupt(self, rf_receive_interrupt: int) -> bool:
+        """Enable RF receiving on the given interrupt."""
         if rf_receive_interrupt is not None:
             response = await self.send(f"RF receive {rf_receive_interrupt}")
             return response == "ACK"
         return False
 
-    def add_rf_receive_callback(self, rf_receive_callback) -> None:
+    def add_rf_receive_callback(
+        self, rf_receive_callback: RfReceiveCallback | None
+    ) -> None:
+        """Add a callback for decoded RF messages."""
         if rf_receive_callback is not None:
             self._rf_receive_callbacks.append(rf_receive_callback)
 
     def connection_made(self, transport: BaseTransport) -> None:
-        self.transport = transport
+        # The transport is created by serialx.create_serial_connection().
+        """Store the transport of the new connection."""
+        self.transport = cast(BaseSerialTransport, transport)
 
-    def data_received(self, data) -> None:
+    def data_received(self, data: bytes) -> None:
+        """Split the received data into lines and handle them."""
         try:
             decoded_data = data.decode()
         except UnicodeDecodeError:
@@ -122,10 +139,12 @@ class HomeduinoProtocol(asyncio.Protocol):
                 self.last_message_received = datetime.now()
 
     def handle_ready(self) -> None:
+        """Mark the Homeduino as ready."""
         self.ready = True
         logger.info("Homeduino is connected")
 
     def handle_rf_receive(self, line: str) -> None:
+        """Decode a received RF message and pass it to the callbacks."""
         logger.debug(line)
 
         # The first 8 numbers are the pulse lengths and the last string of numbers is the pulse
@@ -150,6 +169,7 @@ class HomeduinoProtocol(asyncio.Protocol):
                     rf_receive_callback(protocol)
 
     def handle_key_press(self, line: str) -> None:
+        """Handle a key press, currently ignored."""
         logger.debug(line)
         # Ignoring key presses for now
 
@@ -170,13 +190,10 @@ class HomeduinoProtocol(asyncio.Protocol):
 
         try:
             data = packet + "\n"
-            # type ignore: transport from create_connection is documented to be
-            # implementation specific bidirectional, even though typed as
-            # BaseTransport
             async with self._send_lock:
                 self._awaiting_response = True
                 logger.debug("Writing data: %s", repr(data))
-                self.transport.write(data.encode())  # type: ignore
+                self.transport.write(data.encode())
 
                 timeout = time.time() + _RESPONSE_TIMEOUT
                 while len(self.response_buffer) == 0:
@@ -203,9 +220,8 @@ class HomeduinoProtocol(asyncio.Protocol):
                 # Set last RF send timestamp
                 self._last_rf_send = datetime.now()
 
-        return None
-
-    def connection_lost(self, exc: Optional[Exception]) -> None:
+    def connection_lost(self, exc: Exception | None) -> None:
+        """Clear the transport when the connection is lost."""
         logger.info("Port closed")
         if exc:
             logger.error("Disconnected due to exception: %s", exc)
@@ -217,18 +233,22 @@ class HomeduinoProtocol(asyncio.Protocol):
 
 
 class HomeduinoPinMode(IntEnum):
+    """Pin modes of the Homeduino."""
+
     INPUT = 0x00
     OUTPUT = 0x01
     INPUT_PULLUP = 0x02
 
 
 class Homeduino:
+    """Homeduino connected to a serial port."""
+
     rf_receive_interrupt: int | None = None
 
     protocol: HomeduinoProtocol | None = None
 
-    _ping_and_read_task = None
-    _loop = None
+    _ping_and_read_task: asyncio.Task[None] | None = None
+    _loop: asyncio.AbstractEventLoop | None = None
 
     _ping_failed_counter = 0
 
@@ -239,16 +259,17 @@ class Homeduino:
         rf_receive_pin: int | None = DEFAULT_RECEIVE_PIN,
         rf_send_pin: int | None = DEFAULT_SEND_PIN,
     ):
+        """Initialize class."""
         self._path = path
         self._baud_rate = baud_rate
         if rf_receive_pin is not None:
             self.rf_receive_interrupt = rf_receive_pin - 2
         self.rf_send_pin = rf_send_pin
 
-        self._rf_receive_callbacks = []
-        self._digital_read_callbacks = {}
-        self._analog_read_callbacks = {}
-        self._dht_read_callbacks = {}
+        self._rf_receive_callbacks: list[RfReceiveCallback] = []
+        self._digital_read_callbacks: dict[int, list[DigitalReadCallback]] = {}
+        self._analog_read_callbacks: dict[int, list[AnalogReadCallback]] = {}
+        self._dht_read_callbacks: dict[int, tuple[int, list[DhtReadCallback]]] = {}
 
     async def _connect(self) -> bool:
         if not self.connected():
@@ -259,10 +280,7 @@ class Homeduino:
             try:
                 protocol_factory = partial(HomeduinoProtocol)
 
-                (
-                    _transport,
-                    self.protocol,
-                ) = await serialx.create_serial_connection(
+                _transport, protocol = await serialx.create_serial_connection(
                     self._loop,
                     protocol_factory=protocol_factory,
                     url=self._path,
@@ -272,6 +290,7 @@ class Homeduino:
                     stopbits=StopBits.ONE,
                     # timeout=1,
                 )
+                self.protocol = cast(HomeduinoProtocol, protocol)
 
                 start_time = datetime.now()
                 while self.protocol is not None and not self.protocol.ready:
@@ -279,6 +298,10 @@ class Homeduino:
                         break
                     logger.debug("Waiting for Homeduino to become ready")
                     await asyncio.sleep(0.1)
+
+                if self.protocol is None:
+                    logger.warning("Homeduino disconnected while connecting")
+                    return False
 
                 if not self.protocol.ready:
                     logger.warning(
@@ -298,14 +321,19 @@ class Homeduino:
 
                 for rf_receive_callback in self._rf_receive_callbacks:
                     self.protocol.add_rf_receive_callback(rf_receive_callback)
-
+            except OSError, SerialException:
+                logger.exception("Failed to connect to %s", self._path)
+            else:
                 return True
-            except (OSError, SerialException) as ex:
-                logger.exception(ex.strerror)
 
         return False
 
-    async def connect(self, loop=None, ping_interval=_PING_INTERVAL) -> bool:
+    async def connect(
+        self,
+        loop: asyncio.AbstractEventLoop | None = None,
+        ping_interval: float = _PING_INTERVAL,
+    ) -> bool:
+        """Connect to the Homeduino."""
         self._loop = loop
 
         if not self.connected() and await self._connect():
@@ -320,13 +348,8 @@ class Homeduino:
         return False
 
     def connected(self) -> bool:
-        """
-        True if there is a connection with the Homeduino.
-        """
-        if self.protocol is None or self.protocol.transport is None:
-            return False
-
-        return True
+        """True if there is a connection with the Homeduino."""
+        return self.protocol is not None and self.protocol.transport is not None
 
     async def _disconnect(self) -> bool:
         if self.protocol is not None:
@@ -352,9 +375,7 @@ class Homeduino:
         return not self.connected()
 
     async def disconnect(self) -> bool:
-        """
-        Disconnect from the Homeduino.
-        """
+        """Disconnect from the Homeduino."""
         await self._cancel_ping_and_read()
         return await self._disconnect()
 
@@ -365,6 +386,9 @@ class Homeduino:
     async def _ping(self) -> bool:
         logger.debug("Pinging Homeduino")
         message = f"PING {time.time()}"
+
+        if self.protocol is None:
+            raise HomeduinoDisconnectedError("Homeduino is not connected")
 
         response = await self.protocol.send(message)
         if response == message:
@@ -379,6 +403,7 @@ class Homeduino:
         return False
 
     async def ping(self) -> bool:
+        """Ping the Homeduino."""
         if not self.connected() or self.protocol is None:
             raise HomeduinoDisconnectedError("Homeduino is not connected")
 
@@ -387,14 +412,16 @@ class Homeduino:
 
         return await self._ping()
 
-    def add_rf_receive_callback(self, rf_receive_callback) -> None:
+    def add_rf_receive_callback(self, rf_receive_callback: RfReceiveCallback) -> None:
+        """Add a callback for decoded RF messages."""
         self._rf_receive_callbacks.append(rf_receive_callback)
         if self.connected() and self.protocol is not None:
             self.protocol.add_rf_receive_callback(rf_receive_callback)
 
     async def add_digital_read_callback(
-        self, digital_io: int, digital_read_callback
+        self, digital_io: int, digital_read_callback: DigitalReadCallback
     ) -> None:
+        """Add a callback for changes of a digital input."""
         if self.connected():
             await self.pin_mode(digital_io, HomeduinoPinMode.INPUT_PULLUP)
         if digital_io in self._digital_read_callbacks:
@@ -402,27 +429,33 @@ class Homeduino:
         else:
             self._digital_read_callbacks[digital_io] = [digital_read_callback]
 
-    def add_analog_read_callback(self, analog_input: int, analog_read_callback) -> None:
+    def add_analog_read_callback(
+        self, analog_input: int, analog_read_callback: AnalogReadCallback
+    ) -> None:
+        """Add a callback for changes of an analog input."""
         if analog_input in self._analog_read_callbacks:
             self._analog_read_callbacks[analog_input].append(analog_read_callback)
         else:
             self._analog_read_callbacks[analog_input] = [analog_read_callback]
 
     async def add_dht_read_callback(
-        self, dht_type: int, digital_io: int, dht_read_callback
-    ):
+        self, dht_type: int, digital_io: int, dht_read_callback: DhtReadCallback
+    ) -> None:
+        """Add a callback for changes of a DHT sensor."""
         if self.connected():
             await self.pin_mode(digital_io, HomeduinoPinMode.INPUT)
         if digital_io in self._dht_read_callbacks:
             self._dht_read_callbacks[digital_io][1].append(dht_read_callback)
         else:
-            self._dht_read_callbacks[digital_io] = [dht_type, [dht_read_callback]]
+            self._dht_read_callbacks[digital_io] = (dht_type, [dht_read_callback])
 
-    def supports_rf_send(self):
+    def supports_rf_send(self) -> bool:
+        """Return True if an RF send pin is configured."""
         return self.rf_send_pin is not None
 
-    async def raw_rf_send(self, command: str, repeats=DEFAULT_REPEATS) -> bool:
-        if not self.connected():
+    async def raw_rf_send(self, command: str, repeats: int = DEFAULT_REPEATS) -> bool:
+        """Send raw RF sequence."""
+        if not self.connected() or self.protocol is None:
             raise HomeduinoDisconnectedError("Homeduino is not connected")
 
         if self.supports_rf_send():
@@ -433,52 +466,61 @@ class Homeduino:
 
         return False
 
-    async def rf_send(self, rf_protocol: str, values, repeats=DEFAULT_REPEATS) -> bool:
-        if not self.connected():
+    async def rf_send(
+        self, rf_protocol: str, values: dict[str, Any], repeats: int = DEFAULT_REPEATS
+    ) -> bool:
+        """Send RF protocol sequence."""
+        if not self.connected() or self.protocol is None:
             raise HomeduinoDisconnectedError("Homeduino is not connected")
 
         if self.supports_rf_send():
-            rf_protocol = getattr(sys.modules[controller.__name__], rf_protocol)
-            logger.debug(rf_protocol)
+            protocol: ModuleType = getattr(controller, rf_protocol)
+            logger.debug(protocol)
+
+            # Encode first, the raw protocols set their pulse lengths in encode().
+            pulses = protocol.encode(**values)
 
             packet = f"RF send {self.rf_send_pin} {repeats} "
 
-            for pulse_length in rf_protocol.pulse_lengths:
+            for pulse_length in protocol.pulse_lengths:
                 packet += f"{pulse_length} "
 
-            i = len(rf_protocol.pulse_lengths)
+            i = len(protocol.pulse_lengths)
             while i < 8:
                 packet += "0 "
                 i += 1
 
-            packet += rf_protocol.encode(**values)
+            packet += pulses
 
             response = await self.protocol.send(packet)
             return response == "ACK"
 
         return False
 
-    async def send(self, command) -> str:
-        if not self.connected():
+    async def send(self, command: str) -> str:
+        """Send command to Homeduino."""
+        if not self.connected() or self.protocol is None:
             raise HomeduinoDisconnectedError("Homeduino is not connected")
 
         return await self.protocol.send(command)
 
-    async def pin_mode(self, digital_io: int, mode: HomeduinoPinMode):
+    async def pin_mode(self, digital_io: int, mode: HomeduinoPinMode) -> bool:
+        """Set pin mode."""
         response = await self.send(f"PM {digital_io} {mode}")
-        success = response == "ACK"
+        return response == "ACK"
 
-        return success
-
-    async def digital_write(self, digital_io: int, value: bool):
+    async def digital_write(self, digital_io: int, value: bool) -> bool:
+        """Write digital output."""
         response = await self.send(f"DW {digital_io} {1 if value else 0}")
         return response == "ACK"
 
     async def digital_read(self, digital_io: int) -> bool:
+        """Read digital output."""
         response = await self.send(f"DR {digital_io}")
         return response == "ACK 1"
 
-    async def analog_write(self, digital_io: int, value: int):
+    async def analog_write(self, digital_io: int, value: int) -> bool:
+        """Analog write."""
         if digital_io not in (3, 5, 6, 9, 10, 11):
             return False
 
@@ -486,30 +528,33 @@ class Homeduino:
         return response == "ACK"
 
     async def analog_read(self, analog_input: int) -> int:
+        """Read analog input."""
         response = await self.send(f"AR {analog_input}")
         response = response.split(" ")[1]
         return int(response)
 
-    async def dht_read(self, dht_type: int, digital_io: int) -> int:
+    async def dht_read(
+        self, dht_type: int, digital_io: int
+    ) -> tuple[float, float] | tuple[None, None]:
+        """Read DHT sensor."""
         response = await self.send(f"DHT {dht_type} {digital_io}")
-        response = response.split(" ")
+        parts = response.split(" ")
         try:
-            temperature = float(response[1])
-            humidity = float(response[2])
-            return (temperature, humidity)
+            temperature = float(parts[1])
+            humidity = float(parts[2])
         except ValueError:
-            pass
+            return (None, None)
 
-        return (None, None)
+        return (temperature, humidity)
 
     @staticmethod
-    def get_protocols() -> [str]:
-        """Returns the supported protocols in natural sorted order"""
+    def get_protocols() -> list[str]:
+        """Returns the supported protocols in natural sorted order."""
 
-        def convert(text):
+        def convert(text: str) -> int | str:
             return int(text) if text.isdigit() else text.lower()
 
-        def alphanum_key(key: str):
+        def alphanum_key(key: str) -> list[int | str]:
             return [convert(c) for c in re.split("([0-9]+)", key)]
 
         protocol_names = [protocol.name for protocol in controller.get_all_protocols()]
@@ -523,16 +568,17 @@ class Homeduino:
 
         return True
 
-    async def _ping_and_read_coroutine(self, ping_interval: timedelta):
-        """
+    async def _ping_and_read_coroutine(self, ping_interval: timedelta) -> None:
+        """Ping the Homeduino and read its inputs.
+
         To test the connection for availability a ping message can be sent every interval if no
         other messages where received during the interval.
         """
         failed_pings = 0
-        digital_io_values = [None] * 14
-        analog_input_values = [None] * 8
-        dht_values = [(None, None)] * 14
-        last_dht_read = None
+        digital_io_values: list[bool | None] = [None] * 14
+        analog_input_values: list[int | None] = [None] * 8
+        dht_values: list[tuple[float | None, float | None]] = [(None, None)] * 14
+        last_dht_read: datetime | None = None
         sleep_time = 0.1
         while True:
             try:
@@ -542,79 +588,83 @@ class Homeduino:
                 if self.protocol is None:
                     break
 
-                if self.connected():
+                if not self.connected():
+                    await asyncio.sleep(sleep_time)
+                    continue
+
+                for (
+                    digital_io,
+                    digital_read_callbacks,
+                ) in self._digital_read_callbacks.copy().items():
+                    sleep_time = 0.01
+                    if self.protocol.busy():
+                        continue
+                    digital_value = await self.digital_read(digital_io)
+                    if digital_value == digital_io_values[digital_io]:
+                        continue
+                    logger.debug("Digital %i: %s", digital_io, digital_value)
+                    for digital_read_callback in digital_read_callbacks:
+                        digital_read_callback(digital_value)
+                    digital_io_values[digital_io] = digital_value
+
+                for (
+                    analog_input,
+                    analog_read_callbacks,
+                ) in self._analog_read_callbacks.copy().items():
+                    sleep_time = 0.01
+                    if self.protocol.busy():
+                        continue
+                    analog_value = await self.analog_read(analog_input)
+                    if analog_value == analog_input_values[analog_input]:
+                        continue
+                    logger.debug("Analog %i: %s", analog_input, analog_value)
+                    for analog_read_callback in analog_read_callbacks:
+                        analog_read_callback(analog_value)
+                    analog_input_values[analog_input] = analog_value
+
+                if (
+                    last_dht_read is None
+                    or datetime.now() > last_dht_read + _DHT_READ_DELAY
+                ):
                     for (
                         digital_io,
-                        digital_read_callbacks,
-                    ) in self._digital_read_callbacks.copy().items():
-                        sleep_time = 0.01
-                        if not self.protocol.busy():
-                            value = await self.digital_read(digital_io)
-                            previous_value = digital_io_values[digital_io]
-                            if value != previous_value:
-                                logger.debug("Digital %i: %s", digital_io, value)
-                                for digital_read_callback in digital_read_callbacks:
-                                    digital_read_callback(value)
-                                digital_io_values[digital_io] = value
+                        (dht_type, dht_read_callbacks),
+                    ) in self._dht_read_callbacks.copy().items():
+                        if self.protocol.busy():
+                            continue
+                        temperature, humidity = await self.dht_read(
+                            dht_type, digital_io
+                        )
+                        last_dht_read = datetime.now()
+                        # Both are None if the DHT couldn't be read.
+                        if (
+                            temperature is None
+                            or humidity is None
+                            or (temperature, humidity) == dht_values[digital_io]
+                        ):
+                            continue
+                        logger.debug(
+                            "DHT %i: %s°, %s%%", digital_io, temperature, humidity
+                        )
+                        for dht_read_callback in dht_read_callbacks:
+                            dht_read_callback(temperature, humidity)
+                        dht_values[digital_io] = (temperature, humidity)
 
-                    for (
-                        analog_input,
-                        analog_read_callbacks,
-                    ) in self._analog_read_callbacks.copy().items():
-                        sleep_time = 0.01
-                        if not self.protocol.busy():
-                            value = await self.analog_read(analog_input)
-                            previous_value = analog_input_values[analog_input]
-                            if value != previous_value:
-                                logger.debug("Analog %i: %s", analog_input, value)
-                                for analog_read_callback in analog_read_callbacks:
-                                    analog_read_callback(value)
-                                analog_input_values[analog_input] = value
-
-                    if (
-                        last_dht_read is None
-                        or datetime.now() > last_dht_read + _DHT_READ_DELAY
-                    ):
-                        for (
-                            digital_io,
-                            (dht_type, dht_read_callbacks),
-                        ) in self._dht_read_callbacks.copy().items():
-                            if not self.protocol.busy():
-                                temperature, humidity = await self.dht_read(
-                                    dht_type, digital_io
-                                )
-                                previous_temperature, previous_humidity = dht_values[
-                                    digital_io
-                                ]
-                                if temperature is not None and (
-                                    temperature != previous_temperature
-                                    or humidity != previous_humidity
-                                ):
-                                    logger.debug(
-                                        "DHT %i: %s°, %s%%",
-                                        digital_io,
-                                        temperature,
-                                        humidity,
-                                    )
-                                    for dht_read_callback in dht_read_callbacks:
-                                        dht_read_callback(temperature, humidity)
-                                    dht_values[digital_io] = (temperature, humidity)
-                                last_dht_read = datetime.now()
-
-                    if (
-                        datetime.now()
-                        > self.protocol.last_message_received + ping_interval
-                    ):
-                        if await self.ping():
-                            failed_pings = 0
-                        else:
-                            failed_pings += 1
+                last_message_received = self.protocol.last_message_received
+                if (
+                    last_message_received is None
+                    or datetime.now() > last_message_received + ping_interval
+                ):
+                    if await self.ping():
+                        failed_pings = 0
+                    else:
+                        failed_pings += 1
 
                 await asyncio.sleep(sleep_time)
             except HomeduinoResponseTimeoutError:
                 failed_pings += 1
                 if failed_pings > _ALLOWED_FAILED_PINGS:
-                    logger.error("Unable to ping Homeduino")
+                    logger.exception("Unable to ping Homeduino")
                     await self._reconnect()
             except asyncio.CancelledError:
                 logger.debug("Ping and read coroutine was canceled")
