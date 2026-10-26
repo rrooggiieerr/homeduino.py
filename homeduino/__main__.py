@@ -1,16 +1,19 @@
-"""
-Created on 23 Nov 2022
+"""Command line interface to listen to or send RF messages with a Homeduino.
 
-@author: Rogier van Staveren
-"""
+Usage:
+    python3 -m homeduino <port> [<receive_pin> [<send_pin>]] listen
+    python3 -m homeduino <port> [<receive_pin> [<send_pin>]] send <protocol> <values>
 
-# pylint: disable=missing-function-docstring
+<values> is a JSON object with the values to send, for example
+'{"id": 98765, "unit": 4, "all": false, "state": true}' for switch1.
+"""
 
 import argparse
 import asyncio
 import json
 import logging
 import sys
+from typing import Any
 
 from serialx import SerialException
 
@@ -19,11 +22,13 @@ from homeduino import DEFAULT_RECEIVE_PIN, DEFAULT_SEND_PIN, Homeduino
 _LOGGER = logging.getLogger(__name__)
 
 
-def rf_receive_callback(decoded):
+def rf_receive_callback(decoded: dict[str, Any]) -> None:
+    """Log a decoded RF message."""
     _LOGGER.info("%s %s", decoded["protocol"], json.dumps(decoded["values"]))
 
 
-async def listen(homeduino_: Homeduino):
+async def listen(homeduino_: Homeduino) -> int:
+    """Log the RF messages received by the Homeduino."""
     try:
         _LOGGER.info("Connecting to Homeduino")
         if not await homeduino_.connect():
@@ -31,34 +36,39 @@ async def listen(homeduino_: Homeduino):
             return 1
 
         homeduino_.add_rf_receive_callback(rf_receive_callback)
-        while True:
-            await asyncio.sleep(1)
+        # Listen until interrupted.
+        await asyncio.Event().wait()
 
-    except SerialException as e:
-        _LOGGER.error("Failed to connect to Homeduino, reason: %s", e)
+    except SerialException:
+        _LOGGER.exception("Failed to connect to Homeduino")
         sys.exit(1)
     finally:
         _LOGGER.info("Disconnecting from Homeduino")
         await homeduino_.disconnect()
 
+    return 0
 
-async def send(homeduino_: Homeduino, protocol: str = None, values: str = None):
+
+async def send(homeduino_: Homeduino, protocol: str, values: str) -> int:
+    """Send an RF message with the Homeduino."""
     try:
         _LOGGER.info("Connecting to Homeduino")
-        if not await homeduino.connect(ping_interval=0):
+        if not await homeduino_.connect(ping_interval=0):
             _LOGGER.error("Failed to connect to Homeduino")
             return 1
 
         _LOGGER.debug("Protocol: %s", protocol)
         _LOGGER.debug("Values: %s", values)
-        await homeduino_.rf_send(protocol, values)
+        await homeduino_.rf_send(protocol, json.loads(values))
 
-    except SerialException as e:
-        _LOGGER.error("Failed to connect to Homeduino, reason: %s", e)
+    except SerialException:
+        _LOGGER.exception("Failed to connect to Homeduino")
         sys.exit(1)
     finally:
         _LOGGER.info("Disconnecting from Homeduino")
         await homeduino_.disconnect()
+
+    return 0
 
 
 if __name__ == "__main__":
