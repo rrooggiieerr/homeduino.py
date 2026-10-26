@@ -21,6 +21,8 @@ from homeduino import DEFAULT_RECEIVE_PIN, DEFAULT_SEND_PIN, Homeduino
 
 _LOGGER = logging.getLogger(__name__)
 
+_COMMANDS = ("listen", "send")
+
 
 def rf_receive_callback(decoded: dict[str, Any]) -> None:
     """Log a decoded RF message."""
@@ -49,7 +51,7 @@ async def listen(homeduino_: Homeduino) -> int:
     return 0
 
 
-async def send(homeduino_: Homeduino, protocol: str, values: str) -> int:
+async def send(homeduino_: Homeduino, protocol: str, values: dict[str, Any]) -> int:
     """Send an RF message with the Homeduino."""
     try:
         _LOGGER.info("Connecting to Homeduino")
@@ -59,7 +61,7 @@ async def send(homeduino_: Homeduino, protocol: str, values: str) -> int:
 
         _LOGGER.debug("Protocol: %s", protocol)
         _LOGGER.debug("Values: %s", values)
-        await homeduino_.rf_send(protocol, json.loads(values))
+        await homeduino_.rf_send(protocol, values)
 
     except SerialException:
         _LOGGER.exception("Failed to connect to Homeduino")
@@ -71,8 +73,35 @@ async def send(homeduino_: Homeduino, protocol: str, values: str) -> int:
     return 0
 
 
-if __name__ == "__main__":
-    # Read command line arguments
+def json_object(text: str) -> dict[str, Any]:
+    """Parse the values of the send command, a JSON object."""
+    try:
+        values = json.loads(text)
+    except json.JSONDecodeError as ex:
+        raise argparse.ArgumentTypeError(f"invalid JSON: {ex}") from ex
+    if not isinstance(values, dict):
+        raise argparse.ArgumentTypeError("must be a JSON object")
+    return values
+
+
+def add_default_pins(arguments: list[str]) -> list[str]:
+    """Add the default pins when they're left out.
+
+    argparse decides which value goes to which positional argument by counting, so
+    without pins it would take the arguments of the send command as pins.
+    """
+    for index, argument in enumerate(arguments):
+        if argument in _COMMANDS:
+            # The positional arguments before the command: the port and the given pins.
+            given = [a for a in arguments[:index] if not a.startswith("-")]
+            defaults = [str(DEFAULT_RECEIVE_PIN), str(DEFAULT_SEND_PIN)]
+            missing = defaults[max(len(given) - 1, 0) :]
+            return arguments[:index] + missing + arguments[index:]
+    return arguments
+
+
+def create_argument_parser() -> argparse.ArgumentParser:
+    """Create the parser for the command line arguments."""
     argparser = argparse.ArgumentParser()
     argparser.add_argument("port")
     argparser.add_argument(
@@ -82,15 +111,20 @@ if __name__ == "__main__":
 
     subparsers = argparser.add_subparsers()
 
-    listen_parser = subparsers.add_parser("listen")
+    subparsers.add_parser("listen")
 
     send_parser = subparsers.add_parser("send")
-    send_parser.add_argument("protocol", nargs="?")
-    send_parser.add_argument("values", nargs="?")
+    send_parser.add_argument("protocol")
+    send_parser.add_argument("values", type=json_object)
 
     argparser.add_argument("--debug", dest="debugLogging", action="store_true")
 
-    args = argparser.parse_args()
+    return argparser
+
+
+if __name__ == "__main__":
+    # Read command line arguments
+    args = create_argument_parser().parse_args(add_default_pins(sys.argv[1:]))
 
     if args.debugLogging:
         logging.basicConfig(
@@ -104,8 +138,6 @@ if __name__ == "__main__":
         args.port, rf_receive_pin=args.receive_pin, rf_send_pin=args.send_pin
     )
 
-    loop = asyncio.new_event_loop()
-
     try:
         if "protocol" in args:
             asyncio.run(send(homeduino, args.protocol, args.values))
@@ -114,7 +146,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         # Handle keyboard interrupt
         pass
-    finally:
-        loop.close()
 
     sys.exit(0)
