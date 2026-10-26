@@ -75,6 +75,20 @@ def test_rf_receive() -> None:
     assert {"protocol": "switch1", "values": _SWITCH1_VALUES} in received
 
 
+def test_invalid_rf_receive() -> None:
+    protocol = HomeduinoProtocol()
+    received: list[dict[str, Any]] = []
+    protocol.add_rf_receive_callback(received.append)
+
+    # A garbled line doesn't keep the next line from being handled.
+    protocol.data_received(
+        b"RF receive 268 1282\r\n"
+        + f"RF receive {_SWITCH1_PULSE_LENGTHS} {_SWITCH1_PULSE_SEQUENCE}\r\n".encode()
+    )
+
+    assert {"protocol": "switch1", "values": _SWITCH1_VALUES} in received
+
+
 def test_unknown_rf_receive() -> None:
     protocol = HomeduinoProtocol()
     received: list[dict[str, Any]] = []

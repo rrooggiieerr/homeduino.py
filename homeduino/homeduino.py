@@ -161,9 +161,14 @@ class HomeduinoProtocol(asyncio.Protocol):
         # sequence.
         parts = line.split(" ")
 
-        pulse_lengths = [int(i) for i in parts[2:10]]
-        # logger.debug("pulse lengths: %s", pulse_lengths)
-        pulse_sequence = parts[10]
+        try:
+            pulse_lengths = [int(i) for i in parts[2:10]]
+            # logger.debug("pulse lengths: %s", pulse_lengths)
+            pulse_sequence = parts[10]
+        except IndexError, ValueError:
+            # Can happen when the line is garbled, e.g. when the Homeduino restarted.
+            logger.warning("Invalid RF receive message '%s'", line)
+            return
 
         # Match pulse sequence to a protocol
         decoded = controller.decode_pulses(pulse_lengths, pulse_sequence)
