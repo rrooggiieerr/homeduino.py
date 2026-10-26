@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import re
 import sys
 import time
@@ -11,10 +10,9 @@ from enum import IntEnum
 from functools import partial
 from typing import Any, Final, Optional
 
-import serial_asyncio_fast as serial_asyncio
 from rfcontrol import controller
-from serial.serialutil import SerialException
-from serial_asyncio_fast import SerialTransport
+import serialx
+from serialx import Parity, SerialException, SerialTransport, StopBits
 
 from .task_helper import save_task_reference
 
@@ -236,17 +234,13 @@ class Homeduino:
 
     def __init__(
         self,
-        serial_port: str,
+        path: str,
         baud_rate: int = DEFAULT_BAUD_RATE,
         rf_receive_pin: int | None = DEFAULT_RECEIVE_PIN,
         rf_send_pin: int | None = DEFAULT_SEND_PIN,
     ):
-        # Test if the device exists
-        if not os.path.exists(serial_port):
-            logger.warning("No such file or directory: '%s'", serial_port)
-
-        self.serial_port = serial_port
-        self.baud_rate = baud_rate
+        self._path = path
+        self._baud_rate = baud_rate
         if rf_receive_pin is not None:
             self.rf_receive_interrupt = rf_receive_pin - 2
         self.rf_send_pin = rf_send_pin
@@ -261,25 +255,26 @@ class Homeduino:
             if self._loop is None:
                 self._loop = asyncio.get_event_loop()
 
-            logger.info("Connecting to %s", self.serial_port)
+            logger.info("Connecting to %s", self._path)
             try:
                 protocol_factory = partial(HomeduinoProtocol)
 
                 (
                     _transport,
                     self.protocol,
-                ) = await serial_asyncio.create_serial_connection(
+                ) = await serialx.create_serial_connection(
                     self._loop,
-                    protocol_factory,
-                    self.serial_port,
-                    baudrate=self.baud_rate,
-                    bytesize=serial_asyncio.serial.EIGHTBITS,
-                    parity=serial_asyncio.serial.PARITY_NONE,
-                    stopbits=serial_asyncio.serial.STOPBITS_ONE,
+                    protocol_factory=protocol_factory,
+                    url=self._path,
+                    baudrate=self._baud_rate,
+                    byte_size=8,
+                    parity=Parity.NONE,
+                    stopbits=StopBits.ONE,
+                    # timeout=1,
                 )
 
                 start_time = datetime.now()
-                while not self.protocol.ready:
+                while self.protocol is not None and not self.protocol.ready:
                     if (datetime.now() - start_time).total_seconds() > _READY_TIMEOUT:
                         break
                     logger.debug("Waiting for Homeduino to become ready")
@@ -305,8 +300,8 @@ class Homeduino:
                     self.protocol.add_rf_receive_callback(rf_receive_callback)
 
                 return True
-            except SerialException as ex:
-                logger.error(ex)
+            except (OSError, SerialException) as ex:
+                logger.exception(ex.strerror)
 
         return False
 
@@ -384,7 +379,7 @@ class Homeduino:
         return False
 
     async def ping(self) -> bool:
-        if not self.connected():
+        if not self.connected() or self.protocol is None:
             raise HomeduinoDisconnectedError("Homeduino is not connected")
 
         if self.protocol.busy():
@@ -394,7 +389,7 @@ class Homeduino:
 
     def add_rf_receive_callback(self, rf_receive_callback) -> None:
         self._rf_receive_callbacks.append(rf_receive_callback)
-        if self.connected():
+        if self.connected() and self.protocol is not None:
             self.protocol.add_rf_receive_callback(rf_receive_callback)
 
     async def add_digital_read_callback(
@@ -544,6 +539,9 @@ class Homeduino:
                 if not self.connected():
                     await self._reconnect()
 
+                if self.protocol is None:
+                    break
+
                 if self.connected():
                     for (
                         digital_io,
@@ -617,7 +615,7 @@ class Homeduino:
                 failed_pings += 1
                 if failed_pings > _ALLOWED_FAILED_PINGS:
                     logger.error("Unable to ping Homeduino")
-                    self._reconnect()
+                    await self._reconnect()
             except asyncio.CancelledError:
                 logger.debug("Ping and read coroutine was canceled")
                 break

@@ -12,7 +12,7 @@ import json
 import logging
 import sys
 
-from serial.serialutil import SerialException
+from serialx import SerialException
 
 from homeduino import DEFAULT_RECEIVE_PIN, DEFAULT_SEND_PIN, Homeduino
 
