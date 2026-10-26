@@ -10,7 +10,6 @@ from collections import deque
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from enum import IntEnum
-from functools import partial
 import logging
 import re
 import time
@@ -285,11 +284,12 @@ class Homeduino:
 
             logger.info("Connecting to %s", self._path)
             try:
-                protocol_factory = partial(HomeduinoProtocol)
-
-                _transport, protocol = await serialx.create_serial_connection(
+                # Create the protocol here, create_serial_connection() returns it as
+                # asyncio.Protocol.
+                protocol = HomeduinoProtocol()
+                await serialx.create_serial_connection(
                     self._loop,
-                    protocol_factory=protocol_factory,
+                    protocol_factory=lambda: protocol,
                     url=self._path,
                     baudrate=self._baud_rate,
                     byte_size=8,
@@ -297,7 +297,7 @@ class Homeduino:
                     stopbits=StopBits.ONE,
                     # timeout=1,
                 )
-                self.protocol = cast(HomeduinoProtocol, protocol)
+                self.protocol = protocol
 
                 start_time = datetime.now()
                 while self.protocol is not None and not self.protocol.ready:
