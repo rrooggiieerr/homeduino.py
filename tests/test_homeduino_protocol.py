@@ -1,10 +1,13 @@
 """Tests for the serial protocol, these don't need a connected Homeduino."""
 
 import asyncio
+from collections.abc import Callable
 from typing import Any, cast
+from unittest.mock import Mock
 
 import pytest
 from rfcontrol import controller
+import serialx
 from serialx import BaseSerialTransport
 
 from homeduino import (
@@ -167,3 +170,32 @@ def test_get_protocols() -> None:
     protocols = Homeduino.get_protocols()
     assert "switch1" in protocols
     assert protocols.index("switch2") < protocols.index("switch10")
+
+
+async def test_connect_not_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(homeduino_module, "_READY_TIMEOUT", 0.05)
+    monkeypatch.setattr(homeduino_module, "_RESPONSE_TIMEOUT", 0.05)
+
+    # A serial connection to a device that never answers.
+    protocols: list[HomeduinoProtocol] = []
+    transport = Mock()
+    transport.close.side_effect = lambda: protocols[0].connection_lost(None)
+
+    async def create_serial_connection(
+        _loop: asyncio.AbstractEventLoop,
+        protocol_factory: Callable[[], HomeduinoProtocol],
+        **_kwargs: Any,
+    ) -> tuple[Mock, HomeduinoProtocol]:
+        protocol = protocol_factory()
+        protocol.connection_made(transport)
+        protocols.append(protocol)
+        return transport, protocol
+
+    monkeypatch.setattr(serialx, "create_serial_connection", create_serial_connection)
+
+    homeduino = Homeduino("/dev/fake")
+    with pytest.raises(HomeduinoResponseTimeoutError):
+        await homeduino.connect(ping_interval=0)
+    # The serial port is closed again.
+    transport.close.assert_called_once()
+    assert homeduino.protocol is None

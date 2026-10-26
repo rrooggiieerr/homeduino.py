@@ -338,6 +338,12 @@ class Homeduino:
                     self.protocol.add_rf_receive_callback(rf_receive_callback)
             except OSError, SerialException:
                 logger.exception("Failed to connect to %s", self._path)
+                # Close the serial port if it was opened.
+                await self._disconnect()
+            except HomeduinoError:
+                # Close the serial port, the caller handles the error.
+                await self._disconnect()
+                raise
             else:
                 return True
 
