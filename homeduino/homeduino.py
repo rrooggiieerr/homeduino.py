@@ -181,7 +181,12 @@ class HomeduinoProtocol(asyncio.Protocol):
             for protocol in decoded:
                 logger.debug("Forwarding RF protocol to receive callbacks")
                 for rf_receive_callback in self._rf_receive_callbacks:
-                    rf_receive_callback(protocol)
+                    # An error in one callback shouldn't keep the message from the
+                    # other callbacks, or stop handling the received data.
+                    try:
+                        rf_receive_callback(protocol)
+                    except Exception:
+                        logger.exception("Error in RF receive callback")
 
     def handle_key_press(self, line: str) -> None:
         """Handle a key press, currently ignored."""

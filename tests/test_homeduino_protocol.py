@@ -89,6 +89,24 @@ def test_invalid_rf_receive() -> None:
     assert {"protocol": "switch1", "values": _SWITCH1_VALUES} in received
 
 
+def test_rf_receive_callback_error() -> None:
+    protocol = HomeduinoProtocol()
+
+    def failing_callback(_decoded: dict[str, Any]) -> None:
+        raise RuntimeError("Callback error")
+
+    received: list[dict[str, Any]] = []
+    protocol.add_rf_receive_callback(failing_callback)
+    protocol.add_rf_receive_callback(received.append)
+
+    # An error in one callback doesn't keep the message from the other callbacks.
+    protocol.data_received(
+        f"RF receive {_SWITCH1_PULSE_LENGTHS} {_SWITCH1_PULSE_SEQUENCE}\r\n".encode()
+    )
+
+    assert {"protocol": "switch1", "values": _SWITCH1_VALUES} in received
+
+
 def test_unknown_rf_receive() -> None:
     protocol = HomeduinoProtocol()
     received: list[dict[str, Any]] = []
