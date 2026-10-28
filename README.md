@@ -1,4 +1,4 @@
-# Python library for interfacing with the RFControl Arduino library
+# Python library for the Homeduino
 
 ![Python][python-shield]
 [![GitHub Release][releases-shield]][releases]
@@ -9,12 +9,26 @@
 
 ## Introduction
 
-Python library for using various 433 Mhz devices and sensors with a connected Arduino with homeduino
-sketch.
+Python library for using an Arduino with the homeduino sketch. It sends and receives RF messages
+from various 433 MHz devices and sensors, reads and writes digital and analog pins, and reads DHT
+sensors.
 
 ## Features
 
+- Receive RF messages, decoded with [rfcontrolpy](https://github.com/rrooggiieerr/rfcontrolpy), and
+  pass them to callbacks
+- Send RF messages, by protocol and values or as a raw pulse sequence
+- Read and write digital pins, and set their pin mode
+- Read analog inputs and write analog (PWM) outputs
+- Read DHT temperature and humidity sensors
+- Call callbacks when digital inputs, analog inputs or DHT sensors change
+- Ping the Homeduino to check the connection and reconnect if it's lost
+
 ## Hardware
+
+An Arduino with the [homeduino](https://github.com/pimatic/homeduino) sketch, connected over a
+serial port. By default the 433 MHz receiver is connected to pin 2 and the transmitter to pin 4.
+The serial connection uses 115200 baud by default, 57600 baud is also supported.
 
 ## Installation
 
@@ -35,7 +49,9 @@ messages.
 
 You can add the `--debug` flag to the CLI command to get a more details on what's going on. Like so:
 
-`python3 -m homeduino <port> <key> --debug`
+`python3 -m homeduino <port> --debug listen`
+
+The `--debug` flag has to be given before `listen` or `send`.
 
 ## Support my work
 
@@ -47,7 +63,7 @@ platforms, your donation is greatly appreciated and keeps me motivated:
 
 ## Hire me
 
-If you're in need for a freelance Python developer for your project please contact me, you can find
+If you're in need of a freelance Python developer for your project please contact me, you can find
 my email address on [my GitHub profile](https://github.com/rrooggiieerr).
 
 [python-shield]: https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54
